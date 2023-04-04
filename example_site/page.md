@@ -10,6 +10,8 @@ This is a *very simple* page.
 
 And a [link](/page1/).
 
+And an image: <img src="heart.svg" alt="heart" style="width: 2cm" />
+
 ## Lists
 
 1. First item

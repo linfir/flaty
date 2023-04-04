@@ -6,13 +6,17 @@ use std::{
 
 use anyhow::Context;
 use axum::{
+    body::Body,
+    debug_handler,
     extract::State,
-    http::{Method, StatusCode, Uri},
+    http::{Method, Request, StatusCode},
     response::{Html, IntoResponse, Response},
     Router,
 };
 use clap::Parser;
 use markdown::markdown;
+use tower::ServiceExt;
+use tower_http::services::ServeFile;
 use tracing::log::info;
 
 mod markdown;
@@ -63,8 +67,9 @@ impl App {
     }
 }
 
-async fn real_handler(uri: Uri, method: Method, State(app): State<Arc<App>>) -> Response {
-    match handler(uri, method, app).await {
+#[debug_handler]
+async fn real_handler(State(app): State<Arc<App>>, request: Request<Body>) -> Response {
+    match handler(app, request).await {
         Ok(x) => x,
         Err(e) => match e {
             NotFound => (StatusCode::NOT_FOUND, ()).into_response(),
@@ -72,12 +77,22 @@ async fn real_handler(uri: Uri, method: Method, State(app): State<Arc<App>>) -> 
     }
 }
 
-async fn handler(uri: Uri, method: Method, app: Arc<App>) -> MyResult {
+async fn handler(app: Arc<App>, request: Request<Body>) -> MyResult {
+    let method = request.method();
+    let uri_path = request.uri().path();
+
     if method != Method::GET {
         return NotFound.into_http();
     }
 
-    if uri.path() != "/" {
+    if uri_path == "/heart.svg" {
+        return ServeFile::new(app.root.join("heart.svg"))
+            .oneshot(request)
+            .await
+            .into_http();
+    }
+
+    if uri_path != "/" {
         return NotFound.into_http();
     }
 

@@ -9,17 +9,17 @@ pub enum MarkdownError {
 }
 
 pub fn markdown(path: &Path) -> Result<HashMap<String, String>, MarkdownError> {
-    let doc = std::fs::read_to_string(&path).map_err(|_| MarkdownError::CannotReadFile)?;
+    let doc = std::fs::read_to_string(path).map_err(|_| MarkdownError::CannotReadFile)?;
     let (h, doc) = parse_header(&doc)?;
     let mut h = h;
     let mut buf = String::new();
-    html::push_html(&mut buf, Parser::new(&doc));
+    html::push_html(&mut buf, Parser::new(doc));
     h.insert("contents".into(), buf);
     Ok(h)
 }
 
 fn parse_header(src: &str) -> Result<(HashMap<String, String>, &str), MarkdownError> {
-    match split(&src) {
+    match split(src) {
         Some((a, b)) => {
             let mut yaml_vec =
                 YamlLoader::load_from_str(a).map_err(|_| MarkdownError::InvalidHeader)?;

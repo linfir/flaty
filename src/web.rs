@@ -38,24 +38,24 @@ pub type MyResult = Result<MyResponse, MyError>;
 pub async fn web(app: Arc<App>, req: MyRequest<'_>) -> MyResult {
     let MyRequest::Get(uri_path) = req;
 
-    if uri_path == "/heart.svg" {
-        return Ok(MyResponse::File(app.root.join("heart.svg")));
+    if !uri_path.starts_with('/') {
+        Err(MyError::NotFound)
+    } else if uri_path == "/heart.svg" {
+        Ok(MyResponse::File(app.root.join("heart.svg")))
+    } else if uri_path.ends_with('/') {
+        let doc = slurp(app.root.join(&format!("{}page.md", &uri_path[1..]))).await?;
+        let md = markdown(&doc).map_err(|_| MyError::NotFound)?;
+
+        let tpl = slurp(app.root.join("_style/default.html")).await?;
+        let hbs = handlebars::Handlebars::new();
+        let html = hbs
+            .render_template(&tpl, &md)
+            .map_err(|_| MyError::Internal("invalid template".into()))?;
+
+        Ok(MyResponse::Html(html))
+    } else {
+        Err(MyError::NotFound)
     }
-
-    if uri_path != "/" {
-        return Err(MyError::NotFound);
-    }
-
-    let doc = slurp(app.root.join("page.md")).await?;
-    let md = markdown(&doc).map_err(|_| MyError::NotFound)?;
-
-    let tpl = slurp(app.root.join("_style/default.html")).await?;
-    let hbs = handlebars::Handlebars::new();
-    let html = hbs
-        .render_template(&tpl, &md)
-        .map_err(|_| MyError::Internal("invalid template".into()))?;
-
-    Ok(MyResponse::Html(html))
 }
 
 pub async fn slurp(path: impl AsRef<Path>) -> Result<String, MyError> {

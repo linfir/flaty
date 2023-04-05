@@ -4,7 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use crate::markdown::markdown;
+use crate::{markdown::markdown, sass::sass};
 
 // No dependency on Hyper or Axum
 
@@ -24,11 +24,13 @@ pub enum MyRequest<'a> {
 
 pub enum MyResponse {
     Html(String),
+    Css(String),
     File(PathBuf),
 }
 
 pub enum MyError {
     NotFound,
+    InvalidScss,
     CannotRead(PathBuf),
     Internal(Cow<'static, str>),
 }
@@ -40,6 +42,10 @@ pub async fn web(app: Arc<App>, req: MyRequest<'_>) -> MyResult {
 
     if !uri_path.starts_with('/') {
         Err(MyError::NotFound)
+    } else if uri_path == "/default.css" {
+        let doc = slurp(app.root.join("_style/default.scss")).await?;
+        let css = sass(doc).await?;
+        Ok(MyResponse::Css(css))
     } else if uri_path == "/heart.svg" {
         Ok(MyResponse::File(app.root.join("heart.svg")))
     } else if uri_path.ends_with('/') {

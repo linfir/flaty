@@ -1,0 +1,66 @@
+use std::{
+    borrow::Cow,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
+
+use crate::markdown::markdown;
+
+// No dependency on Hyper or Axum
+
+pub struct App {
+    root: PathBuf,
+}
+
+impl App {
+    pub fn new(root: PathBuf) -> Self {
+        App { root }
+    }
+}
+
+pub enum MyRequest<'a> {
+    Get(&'a str),
+}
+
+pub enum MyResponse {
+    Html(String),
+    File(PathBuf),
+}
+
+pub enum MyError {
+    NotFound,
+    CannotRead(PathBuf),
+    Internal(Cow<'static, str>),
+}
+
+pub type MyResult = Result<MyResponse, MyError>;
+
+pub async fn web(app: Arc<App>, req: MyRequest<'_>) -> MyResult {
+    let MyRequest::Get(uri_path) = req;
+
+    if uri_path == "/heart.svg" {
+        return Ok(MyResponse::File(app.root.join("heart.svg")));
+    }
+
+    if uri_path != "/" {
+        return Err(MyError::NotFound);
+    }
+
+    let doc = slurp(app.root.join("page.md")).await?;
+    let md = markdown(&doc).map_err(|_| MyError::NotFound)?;
+
+    let tpl = slurp(app.root.join("_style/default.html")).await?;
+    let hbs = handlebars::Handlebars::new();
+    let html = hbs
+        .render_template(&tpl, &md)
+        .map_err(|_| MyError::Internal("invalid template".into()))?;
+
+    Ok(MyResponse::Html(html))
+}
+
+pub async fn slurp(path: impl AsRef<Path>) -> Result<String, MyError> {
+    let path = path.as_ref();
+    tokio::fs::read_to_string(path)
+        .await
+        .map_err(|_| MyError::CannotRead(path.to_owned()))
+}

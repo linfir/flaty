@@ -1,16 +1,14 @@
-use std::{collections::HashMap, path::Path};
+use std::collections::HashMap;
 
 use pulldown_cmark::{html, Parser};
 use yaml_rust::{Yaml, YamlLoader};
 
 pub enum MarkdownError {
-    CannotReadFile,
     InvalidHeader,
 }
 
-pub fn markdown(path: &Path) -> Result<HashMap<String, String>, MarkdownError> {
-    let doc = std::fs::read_to_string(path).map_err(|_| MarkdownError::CannotReadFile)?;
-    let (h, doc) = parse_header(&doc)?;
+pub fn markdown(doc: &str) -> Result<HashMap<String, String>, MarkdownError> {
+    let (h, doc) = parse_header(doc)?;
     let mut h = h;
     let mut buf = String::new();
     html::push_html(&mut buf, Parser::new(doc));

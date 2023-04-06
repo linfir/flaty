@@ -9,5 +9,5 @@ pub async fn sass(src: String) -> Result<String, MyError> {
         String::from_utf8(css).map_err(|_| MyError::InvalidScss)
     })
     .await
-    .unwrap()
+    .map_err(|_| MyError::InvalidScss)?
 }

@@ -5,4 +5,4 @@ docker-build:
     docker buildx build -t flaty .
 
 docker-run:
-    docker run --rm -it -v ./example_site:/data -p 8080:8080 flaty
+    docker run --rm -it --name flaty -v ./example_site:/data -p 8080:8080 flaty

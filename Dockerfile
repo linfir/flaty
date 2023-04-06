@@ -1,9 +1,9 @@
-FROM rust:buster AS builder
+FROM rust:alpine3.17 AS builder
 WORKDIR /usr/src/flaty
 COPY . ./
-RUN cargo install --path .
+RUN apk add --no-cache musl-dev && cargo install --path .
 
-FROM debian:buster
+FROM alpine:3.17
 EXPOSE 8080
 COPY --from=builder /usr/local/cargo/bin/flaty /usr/local/bin/flaty
 WORKDIR /data

@@ -1,9 +1,9 @@
-FROM rust:alpine3.17 AS builder
+FROM docker.io/rust:alpine3.17 AS builder
 WORKDIR /usr/src/flaty
 COPY . ./
-RUN apk add --no-cache musl-dev && cargo install --path .
+RUN apk add --no-cache musl-dev && cargo install --path . && strip /usr/local/cargo/bin/flaty
 
-FROM alpine:3.17
+FROM docker.io/alpine:3.17
 EXPOSE 8080
 COPY --from=builder /usr/local/cargo/bin/flaty /usr/local/bin/flaty
 WORKDIR /data

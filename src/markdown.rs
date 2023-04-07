@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use pulldown_cmark::{html, Parser};
-use yaml_rust::{Yaml, YamlLoader};
+use toml::{Table, Value};
 
 pub enum MarkdownError {
     InvalidHeader,
@@ -19,28 +19,16 @@ pub fn markdown(doc: &str) -> Result<HashMap<String, String>, MarkdownError> {
 fn parse_header(src: &str) -> Result<(HashMap<String, String>, &str), MarkdownError> {
     match split(src) {
         Some((a, b)) => {
-            let mut yaml_vec =
-                YamlLoader::load_from_str(a).map_err(|_| MarkdownError::InvalidHeader)?;
-            if yaml_vec.len() != 1 {
-                return Err(MarkdownError::InvalidHeader);
-            }
-            let yaml = yaml_vec.pop().unwrap();
-
+            let doc: Table = a.parse().map_err(|_| MarkdownError::InvalidHeader)?;
             let mut h = HashMap::new();
-            match yaml {
-                Yaml::Hash(yaml_top) => {
-                    for (k, v) in yaml_top.into_iter() {
-                        match (k, v) {
-                            (Yaml::String(k), Yaml::String(v)) => {
-                                h.insert(k, v);
-                            }
-                            _ => return Err(MarkdownError::InvalidHeader),
-                        }
+            for (k, v) in doc.into_iter() {
+                match v {
+                    Value::String(v) => {
+                        h.insert(k, v);
                     }
+                    _ => return Err(MarkdownError::InvalidHeader),
                 }
-                _ => return Err(MarkdownError::InvalidHeader),
             }
-
             Ok((h, b))
         }
         None => Ok((HashMap::new(), src)),

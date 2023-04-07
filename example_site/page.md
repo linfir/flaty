@@ -1,7 +1,7 @@
 ---
-title: My title
-author: Flaty
-lang: fr
+title = "My title"
+author = "Flaty"
+lang = "fr"
 ---
 
 # Hello

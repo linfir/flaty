@@ -16,6 +16,7 @@ use web::{MyError, MyResponse};
 
 use crate::web::{web, App, MyRequest};
 
+mod cache;
 mod markdown;
 mod sass;
 mod web;

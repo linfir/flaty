@@ -4,6 +4,8 @@ use std::{
     sync::Arc,
 };
 
+use tracing::debug;
+
 use crate::{markdown::markdown, sass::sass};
 
 // No dependency on Hyper or Axum
@@ -18,6 +20,7 @@ impl App {
     }
 }
 
+#[derive(Debug)]
 pub enum MyRequest<'a> {
     Get(&'a str),
 }
@@ -38,7 +41,11 @@ pub enum MyError {
 pub type MyResult = Result<MyResponse, MyError>;
 
 pub async fn web(app: Arc<App>, req: MyRequest<'_>) -> MyResult {
+    debug!("Request: {req:?}");
     let MyRequest::Get(uri_path) = req;
+
+    let ends_with_slash = uri_path.ends_with('/');
+    let p = to_components(uri_path).ok_or(MyError::NotFound)?;
 
     if !uri_path.starts_with('/') {
         Err(MyError::NotFound)
@@ -62,6 +69,19 @@ pub async fn web(app: Arc<App>, req: MyRequest<'_>) -> MyResult {
     } else {
         Err(MyError::NotFound)
     }
+}
+
+fn to_components(url: &str) -> Option<Vec<&str>> {
+    if url.find("//").is_some() {
+        return None;
+    }
+    Some(
+        url.strip_prefix('/')?
+            .strip_suffix('/')
+            .unwrap_or(url)
+            .split('/')
+            .collect(),
+    )
 }
 
 pub async fn slurp(path: impl AsRef<Path>) -> Result<String, MyError> {

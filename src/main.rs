@@ -1,9 +1,9 @@
 use std::{
-    net::SocketAddr,
+    net::ToSocketAddrs,
     sync::{Arc, Mutex},
 };
 
-use anyhow::Context;
+use anyhow::{anyhow, Context};
 use axum::{
     body::{Body, Full},
     extract::State,
@@ -25,11 +25,17 @@ mod sass;
 mod web;
 
 #[derive(Parser)]
+#[clap(version, about, long_about=None)]
 struct Args {
-    #[arg(default_value_t = {"127.0.0.1:8080".into()})]
-    listen: String,
-    #[arg(default_value_t = {".".into()})]
-    root: String,
+    /// Address
+    #[arg(short, long, default_value_t = {"localhost".into()})]
+    bind: String,
+    /// Port
+    #[arg(short, long, default_value_t = 8080)]
+    port: u16,
+    /// Data directory
+    #[arg(short, long, default_value_t = {".".into()})]
+    directory: String,
 }
 
 #[tokio::main]
@@ -37,17 +43,21 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt().init();
 
     let args = Args::parse();
-    std::env::set_current_dir(&args.root)
-        .with_context(|| format!("Cannot chdir to `{}`", &args.root))?;
+    std::env::set_current_dir(&args.directory)
+        .with_context(|| format!("Cannot chdir to `{}`", &args.directory))?;
 
-    let address: SocketAddr = args.listen.parse().context("invalid listen address")?;
+    let mut addr_iter = (args.bind.as_str(), args.port)
+        .to_socket_addrs()
+        .context("invalid server address")?;
+    let address = addr_iter
+        .next()
+        .ok_or_else(|| anyhow!("cannot resolve server address"))?;
+
     let app = Arc::new(Mutex::new(App::new()));
     let router = Router::new().fallback(real_handler).with_state(app);
-
-    info!("Listening on http://{}/", &address);
-    axum::Server::bind(&address)
-        .serve(router.into_make_service())
-        .await?;
+    let server = axum::Server::bind(&address).serve(router.into_make_service());
+    info!("Listening on http://{}/", server.local_addr());
+    server.await?;
 
     Ok(())
 }

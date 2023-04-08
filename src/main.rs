@@ -1,4 +1,7 @@
-use std::{net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{
+    net::SocketAddr,
+    sync::{Arc, Mutex},
+};
 
 use anyhow::Context;
 use axum::{
@@ -34,9 +37,11 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt().init();
 
     let args = Args::parse();
+    std::env::set_current_dir(&args.root)
+        .with_context(|| format!("Cannot chdir to `{}`", &args.root))?;
+
     let address: SocketAddr = args.listen.parse().context("invalid listen address")?;
-    let root = PathBuf::from(args.root);
-    let app = Arc::new(App::new(root));
+    let app = Arc::new(Mutex::new(App::new()));
     let router = Router::new().fallback(real_handler).with_state(app);
 
     info!("Listening on http://{}/", &address);
@@ -47,7 +52,7 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn real_handler(State(app): State<Arc<App>>, request: Request<Body>) -> Response {
+async fn real_handler(State(app): State<Arc<Mutex<App>>>, request: Request<Body>) -> Response {
     let method = request.method();
     let uri_path = request.uri().path();
 

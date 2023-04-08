@@ -1,7 +1,7 @@
 use std::{
     borrow::Cow,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 
 use tracing::debug;
@@ -10,13 +10,11 @@ use crate::{markdown::markdown, sass::sass};
 
 // No dependency on Hyper or Axum
 
-pub struct App {
-    root: PathBuf,
-}
+pub struct App {}
 
 impl App {
-    pub fn new(root: PathBuf) -> Self {
-        App { root }
+    pub fn new() -> Self {
+        App {}
     }
 }
 
@@ -40,7 +38,7 @@ pub enum MyError {
 
 pub type MyResult = Result<MyResponse, MyError>;
 
-pub async fn web(app: Arc<App>, req: MyRequest<'_>) -> MyResult {
+pub async fn web(app: Arc<Mutex<App>>, req: MyRequest<'_>) -> MyResult {
     debug!("Request: {req:?}");
     let MyRequest::Get(uri_path) = req;
 
@@ -50,16 +48,16 @@ pub async fn web(app: Arc<App>, req: MyRequest<'_>) -> MyResult {
     if !uri_path.starts_with('/') {
         Err(MyError::NotFound)
     } else if uri_path == "/default.css" {
-        let doc = slurp(app.root.join("_style/default.scss")).await?;
+        let doc = slurp("_style/default.scss").await?;
         let css = sass(doc).await?;
         Ok(MyResponse::Css(css))
     } else if uri_path == "/heart.svg" {
-        Ok(MyResponse::File(app.root.join("heart.svg")))
+        Ok(MyResponse::File("heart.svg".into()))
     } else if uri_path.ends_with('/') {
-        let doc = slurp(app.root.join(&format!("{}page.md", &uri_path[1..]))).await?;
+        let doc = slurp(&format!("{}page.md", &uri_path[1..])).await?;
         let md = markdown(&doc).map_err(|_| MyError::NotFound)?;
 
-        let tpl = slurp(app.root.join("_style/default.html")).await?;
+        let tpl = slurp("_style/default.html").await?;
         let hbs = handlebars::Handlebars::new();
         let html = hbs
             .render_template(&tpl, &md)

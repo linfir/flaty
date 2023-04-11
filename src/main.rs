@@ -57,7 +57,7 @@ async fn main() -> anyhow::Result<()> {
     let router = Router::new().fallback(real_handler).with_state(app);
     let server = axum::Server::bind(&address).serve(router.into_make_service());
     info!("Listening on http://{}/", server.local_addr());
-    server.await?;
+    server.await.context("cannot start server")?;
 
     Ok(())
 }

@@ -1,5 +1,4 @@
 use std::{
-    borrow::Cow,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
@@ -33,7 +32,7 @@ pub enum MyError {
     NotFound,
     InvalidScss,
     CannotRead(PathBuf),
-    Internal(Cow<'static, str>),
+    Internal(String),
 }
 
 pub type MyResult = Result<MyResponse, MyError>;

@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 use std::{io, os::unix::prelude::MetadataExt, path::Path};
 
 use tokio::{fs::File, io::AsyncReadExt};

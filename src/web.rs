@@ -38,12 +38,12 @@ pub enum MyError {
 
 pub type MyResult = Result<MyResponse, MyError>;
 
-pub async fn web(app: Arc<Mutex<App>>, req: MyRequest<'_>) -> MyResult {
+pub async fn web(_app: Arc<Mutex<App>>, req: MyRequest<'_>) -> MyResult {
     debug!("Request: {req:?}");
     let MyRequest::Get(uri_path) = req;
 
-    let ends_with_slash = uri_path.ends_with('/');
-    let p = to_components(uri_path).ok_or(MyError::NotFound)?;
+    let _ends_with_slash = uri_path.ends_with('/');
+    let _p = to_components(uri_path).ok_or(MyError::NotFound)?;
 
     if !uri_path.starts_with('/') {
         Err(MyError::NotFound)
@@ -70,7 +70,7 @@ pub async fn web(app: Arc<Mutex<App>>, req: MyRequest<'_>) -> MyResult {
 }
 
 fn to_components(url: &str) -> Option<Vec<&str>> {
-    if url.find("//").is_some() {
+    if url.contains("//") {
         return None;
     }
     Some(

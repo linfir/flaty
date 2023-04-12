@@ -1,6 +1,7 @@
 use std::{
     convert::Infallible,
     net::ToSocketAddrs,
+    path::Path,
     sync::{Arc, Mutex},
 };
 
@@ -8,7 +9,10 @@ use anyhow::{anyhow, Context};
 use clap::Parser;
 use http_body_util::Full;
 use hyper::{
-    body::Bytes, server::conn::http1, service::service_fn, Method, Request, Response, StatusCode,
+    body::{Bytes, Incoming},
+    server::conn::http1,
+    service::service_fn,
+    Method, Request, Response, StatusCode,
 };
 use tokio::net::TcpListener;
 use tracing::info;
@@ -74,7 +78,7 @@ async fn main() -> anyhow::Result<()> {
     }
 }
 
-async fn handler(req: Request<hyper::body::Incoming>, app: Arc<Mutex<App>>) -> Response<MyBody> {
+async fn handler(req: Request<Incoming>, app: Arc<Mutex<App>>) -> Response<MyBody> {
     let method = req.method();
     let uri_path = req.uri().path();
 
@@ -86,17 +90,7 @@ async fn handler(req: Request<hyper::body::Incoming>, app: Arc<Mutex<App>>) -> R
         Ok(r) => match r {
             web::MyResponse::Html(x) => response_ok(x, "text/html"),
             web::MyResponse::Css(x) => response_ok(x, "text/css"),
-            web::MyResponse::File(f) => {
-                // TODO: there is no streaming
-                // this is bad for large files
-                match tokio::fs::read_to_string(&f).await {
-                    Ok(x) => {
-                        let mime = mime_guess::from_path(&f).first_or_octet_stream();
-                        response_ok(x, mime.essence_str())
-                    }
-                    Err(_) => not_found(),
-                }
-            }
+            web::MyResponse::File(f) => serve_file(&f).await,
         },
         Err(e) => match e {
             web::MyError::NotFound => not_found(),
@@ -134,4 +128,16 @@ fn internal_error(msg: impl Into<Bytes>) -> Response<MyBody> {
         .status(StatusCode::INTERNAL_SERVER_ERROR)
         .body(mybody(msg.into()))
         .unwrap()
+}
+
+async fn serve_file(file: &Path) -> Response<MyBody> {
+    // TODO: there is no streaming
+    // this is bad for large files
+    match tokio::fs::read_to_string(file).await {
+        Ok(x) => {
+            let mime = mime_guess::from_path(file).first_or_octet_stream();
+            response_ok(x, mime.essence_str())
+        }
+        Err(_) => not_found(),
+    }
 }

@@ -4,6 +4,9 @@ version = "0.0.1"
 edition = "2021"
 authors = ["Yann Villessuzanne"]
 description = "Flat-File CMS"
+license = "MIT"
+repository = "https://github.com/linfir/flaty"
+keywords = ["http", "web", "server", "cms"]
 
 [dependencies]
 anyhow = "1.0.70"

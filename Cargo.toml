@@ -1,10 +1,10 @@
 [package]
 name = "flaty"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2021"
 authors = ["Yann Villessuzanne"]
 description = "Flat-File CMS"
-license = "MIT"
+license = "AGPL-3.0-only"
 repository = "https://github.com/linfir/flaty"
 keywords = ["http", "web", "server", "cms"]
 

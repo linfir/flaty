@@ -7,17 +7,15 @@ use std::{
 
 use anyhow::{anyhow, Context};
 use clap::Parser;
-use http_body_util::{combinators::UnsyncBoxBody, Full};
 use hyper::{
-    body::{Bytes, Incoming},
-    server::conn::http1,
-    service::service_fn,
-    Method, Request, Response, StatusCode,
+    service::{make_service_fn, service_fn},
+    Body, Method, Request, Response, Server, StatusCode,
 };
-use tokio::net::TcpListener;
+use tokio::fs::File;
+use tokio_util::codec::{BytesCodec, FramedRead};
 use tracing::info;
 
-use crate::web::{web, App, MyRequest};
+use crate::web::{App, MyRequest};
 
 mod cache;
 mod markdown;
@@ -55,30 +53,24 @@ async fn main() -> anyhow::Result<()> {
 
     let app = Arc::new(Mutex::new(App::new()));
 
-    let listener = TcpListener::bind(addr).await?;
-    info!("Listening on http://{}/", listener.local_addr()?);
-
-    loop {
-        let (stream, _) = listener.accept().await?;
+    let make_svc = make_service_fn(move |_conn| {
         let app = app.clone();
-        tokio::task::spawn(async move {
-            if let Err(err) = http1::Builder::new()
-                .serve_connection(
-                    stream,
-                    service_fn(move |req| {
-                        let app = app.clone();
-                        async { Ok::<_, Infallible>(handler(req, app).await) }
-                    }),
-                )
-                .await
-            {
-                println!("Error serving connection: {:?}", err);
-            }
-        });
-    }
+        async move {
+            Ok::<_, Infallible>(service_fn(move |req| {
+                let app = app.clone();
+                async { Ok::<_, Infallible>(handler(req, app).await) }
+            }))
+        }
+    });
+
+    let server = Server::bind(&addr).serve(make_svc);
+    info!("Listening on http://{}/", server.local_addr());
+
+    server.await?;
+    Ok(())
 }
 
-async fn handler(req: Request<Incoming>, app: Arc<Mutex<App>>) -> Response<MyBody> {
+async fn handler(req: Request<Body>, app: Arc<Mutex<App>>) -> Response<Body> {
     let method = req.method();
     let uri_path = req.uri().path();
 
@@ -86,16 +78,12 @@ async fn handler(req: Request<Incoming>, app: Arc<Mutex<App>>) -> Response<MyBod
         return not_found();
     }
 
-    match web(app, MyRequest::Get(uri_path)).await {
+    match web::web(app, MyRequest::Get(uri_path)).await {
         Ok(r) => match r {
             web::MyResponse::Html(x) => response_ok(x, "text/html"),
             web::MyResponse::Css(x) => response_ok(x, "text/css"),
             web::MyResponse::File(f) => serve_file(&f).await,
-            web::MyResponse::Redirect(url) => Response::builder()
-                .status(StatusCode::MOVED_PERMANENTLY)
-                .header("Location", url)
-                .body(mybody(Bytes::new()))
-                .unwrap(),
+            web::MyResponse::Redirect(url) => redirect(&url),
         },
         Err(e) => match e {
             web::MyError::NotFound => not_found(),
@@ -108,40 +96,41 @@ async fn handler(req: Request<Incoming>, app: Arc<Mutex<App>>) -> Response<MyBod
     }
 }
 
-type MyBody = UnsyncBoxBody<Bytes, Infallible>;
-
-fn mybody(bytes: impl Into<Bytes>) -> MyBody {
-    UnsyncBoxBody::new(Full::new(bytes.into()))
-}
-
-fn response_ok(data: impl Into<Bytes>, mime: &str) -> Response<MyBody> {
+fn response_ok(data: impl Into<Body>, mime: &str) -> Response<Body> {
     Response::builder()
         .header("Content-Type", mime)
-        .body(mybody(data.into()))
+        .body(data.into())
         .unwrap()
 }
 
-fn not_found() -> Response<MyBody> {
+fn not_found() -> Response<Body> {
     Response::builder()
         .status(StatusCode::NOT_FOUND)
-        .body(mybody(Bytes::new()))
+        .body(Body::empty())
         .unwrap()
 }
 
-fn internal_error(msg: impl Into<Bytes>) -> Response<MyBody> {
+fn redirect(url: &str) -> Response<Body> {
+    Response::builder()
+        .status(StatusCode::MOVED_PERMANENTLY)
+        .header("Location", url)
+        .body(Body::empty())
+        .unwrap()
+}
+
+fn internal_error(msg: impl Into<Body>) -> Response<Body> {
     Response::builder()
         .status(StatusCode::INTERNAL_SERVER_ERROR)
-        .body(mybody(msg.into()))
+        .body(msg.into())
         .unwrap()
 }
 
-async fn serve_file(file: &Path) -> Response<MyBody> {
-    // TODO: there is no streaming
-    // this is bad for large files
-    match tokio::fs::read_to_string(file).await {
-        Ok(x) => {
-            let mime = mime_guess::from_path(file).first_or_octet_stream();
-            response_ok(x, mime.essence_str())
+async fn serve_file(path: &Path) -> Response<Body> {
+    match File::open(path).await {
+        Ok(file) => {
+            let mime = mime_guess::from_path(path).first_or_octet_stream();
+            let stream = FramedRead::new(file, BytesCodec::new());
+            response_ok(Body::wrap_stream(stream), mime.essence_str())
         }
         Err(_) => not_found(),
     }

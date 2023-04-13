@@ -53,6 +53,8 @@ pub async fn web(_app: Arc<Mutex<App>>, req: MyRequest<'_>) -> MyResult {
         Ok(MyResponse::Css(css))
     } else if uri_path == "/heart.svg" {
         Ok(MyResponse::File("heart.svg".into()))
+    } else if uri_path == "/zero" {
+        Ok(MyResponse::File("zero".into()))
     } else if uri_path.ends_with('/') {
         let doc = slurp(&format!("{}page.md", &uri_path[1..])).await?;
         let md = markdown(&doc).map_err(|_| MyError::NotFound)?;

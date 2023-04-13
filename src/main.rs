@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::{anyhow, Context};
 use clap::Parser;
-use http_body_util::Full;
+use http_body_util::{combinators::UnsyncBoxBody, Full};
 use hyper::{
     body::{Bytes, Incoming},
     server::conn::http1,
@@ -91,6 +91,11 @@ async fn handler(req: Request<Incoming>, app: Arc<Mutex<App>>) -> Response<MyBod
             web::MyResponse::Html(x) => response_ok(x, "text/html"),
             web::MyResponse::Css(x) => response_ok(x, "text/css"),
             web::MyResponse::File(f) => serve_file(&f).await,
+            web::MyResponse::Redirect(url) => Response::builder()
+                .status(StatusCode::MOVED_PERMANENTLY)
+                .header("Location", url)
+                .body(mybody(Bytes::new()))
+                .unwrap(),
         },
         Err(e) => match e {
             web::MyError::NotFound => not_found(),
@@ -103,10 +108,10 @@ async fn handler(req: Request<Incoming>, app: Arc<Mutex<App>>) -> Response<MyBod
     }
 }
 
-type MyBody = Full<Bytes>;
+type MyBody = UnsyncBoxBody<Bytes, Infallible>;
 
 fn mybody(bytes: impl Into<Bytes>) -> MyBody {
-    Full::new(bytes.into())
+    UnsyncBoxBody::new(Full::new(bytes.into()))
 }
 
 fn response_ok(data: impl Into<Bytes>, mime: &str) -> Response<MyBody> {

@@ -26,6 +26,7 @@ pub enum MyResponse {
     Html(String),
     Css(String),
     File(PathBuf),
+    Redirect(String),
 }
 
 pub enum MyError {
@@ -63,6 +64,8 @@ pub async fn web(_app: Arc<Mutex<App>>, req: MyRequest<'_>) -> MyResult {
             .map_err(|_| MyError::Internal("invalid template".into()))?;
 
         Ok(MyResponse::Html(html))
+    } else if uri_path == "/page1" {
+        Ok(MyResponse::Redirect("/page1/".into()))
     } else {
         Err(MyError::NotFound)
     }

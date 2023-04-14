@@ -2,110 +2,106 @@ use std::{
     io,
     os::unix::prelude::MetadataExt,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use anyhow::{Context, Error, Result};
 use parking_lot::Mutex;
-use tokio::{fs::File, io::AsyncReadExt};
-use tracing::trace;
-use twox_hash::xxh3::hash64;
+use tokio::{fs::File, io::AsyncReadExt, time::Instant};
+use tracing::debug;
+use twox_hash::xxh3::hash128;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub struct Digest {
-    mtime: i64,
-    size: u64,
-    hash: u64,
-}
-
-pub async fn load_file(
-    path: impl AsRef<Path>,
-    digest: Option<Digest>,
-) -> io::Result<Option<(Digest, String)>> {
-    let mut file = File::open(path).await?;
-    let meta = file.metadata().await?;
-
-    let size = meta.size();
-    let mtime = meta.mtime();
-    if let Some(digest) = digest {
-        if size == digest.size && mtime == digest.mtime {
-            return Ok(None);
-        }
-    }
-
-    let mut contents = String::new();
-    file.read_to_string(&mut contents).await?;
-    let hash = hash64(contents.as_bytes());
-    if let Some(digest) = digest {
-        if hash == digest.hash {
-            return Ok(None);
-        }
-    }
-
-    let digest = Digest { mtime, size, hash };
-
-    Ok(Some((digest, contents)))
-}
-
-trait Cachable {
+pub trait Cachable {
     fn recompute(src: &str) -> Result<Self>
     where
         Self: Sized;
 }
 
-struct Cache<T> {
+impl<T: Cachable> Cachable for Arc<T> {
+    fn recompute(src: &str) -> Result<Self> {
+        T::recompute(src).map(Arc::new)
+    }
+}
+
+pub struct Cache<T> {
     path: PathBuf,
-    inner: Mutex<(Option<Digest>, T)>,
+    mutex: Mutex<Cached<T>>,
+}
+
+struct Cached<T> {
+    last_check: Option<Instant>,
+    digest: Option<Digest>,
+    value: T,
 }
 
 impl<T> Cache<T> {
-    pub fn new_with(path: PathBuf, inner: T) -> Self {
+    pub fn new(path: PathBuf, value: T) -> Self {
         Cache {
             path,
-            inner: Mutex::new((None, inner)),
+            mutex: Mutex::new(Cached {
+                last_check: None,
+                digest: None,
+                value,
+            }),
         }
+    }
+
+    fn lock_and_update_last_check(&self) {
+        let mut lock = self.mutex.lock();
+        lock.last_check = Some(Instant::now());
     }
 
     pub async fn reload_with(&self, f: impl FnOnce(&str) -> Result<T>) -> Result<T, (T, Error)>
     where
         T: Clone,
     {
-        let (old_digest, old_val) = {
-            let lock = self.inner.lock();
-            lock.clone()
+        let (digest, value) = {
+            let lock = self.mutex.lock();
+            if let Some(last_access) = lock.last_check {
+                if last_access.elapsed().as_secs() < 2 {
+                    return Ok(lock.value.clone());
+                }
+            }
+            (lock.digest, lock.value.clone())
         };
 
-        match load_file(&self.path, old_digest)
+        match load_file(&self.path, digest)
             .await
             .with_context(|| format!("Error reading file `{}`", self.path.display()))
         {
-            Ok(None) => Ok(old_val),
-            Ok(Some((digest, contents))) => {
-                trace!("Reloading file `{}`", self.path.display());
+            Ok((digest, None)) => {
+                self.lock_and_update_last_check();
+                let mut lock = self.mutex.lock();
+                lock.last_check = Some(Instant::now());
+                lock.digest = Some(digest);
+                Ok(value)
+            }
+            Err(err) => {
+                let mut lock = self.mutex.lock();
+                lock.last_check = Some(Instant::now());
+                Err((value, err))
+            }
+            Ok((digest, Some(contents))) => {
+                debug!("Reloading file `{}`", self.path.display());
                 match f(&contents) {
-                    Ok(val) => {
-                        let mut lock = self.inner.lock();
-                        *lock = (Some(digest), val.clone());
-                        Ok(val)
+                    Ok(value) => {
+                        let value2 = value.clone();
+                        let mut lock = self.mutex.lock();
+                        lock.last_check = Some(Instant::now());
+                        lock.digest = Some(digest);
+                        lock.value = value;
+                        Ok(value2)
                     }
-                    Err(err) => Err((old_val, err)),
+                    Err(err) => {
+                        self.lock_and_update_last_check();
+                        let mut lock = self.mutex.lock();
+                        lock.last_check = Some(Instant::now());
+                        lock.digest = Some(digest);
+                        Err((value, err))
+                    }
                 }
             }
-            Err(err) => Err((old_val, err)),
         }
-    }
-
-    pub fn get(&self) -> T
-    where
-        T: Clone,
-    {
-        self.inner.lock().1.clone()
-    }
-
-    pub fn new(path: PathBuf) -> Self
-    where
-        T: Default,
-    {
-        Self::new_with(path, T::default())
     }
 
     pub fn path(&self) -> &Path {
@@ -118,4 +114,36 @@ impl<T> Cache<T> {
     {
         self.reload_with(T::recompute).await
     }
+}
+
+#[derive(Clone, Copy)]
+struct Digest {
+    mtime: i64,
+    size: u64,
+    hash: u128,
+}
+
+async fn load_file(path: &Path, digest: Option<Digest>) -> io::Result<(Digest, Option<String>)> {
+    let mut file = File::open(path).await?;
+    let meta = file.metadata().await?;
+    let size = meta.size();
+    let mtime = meta.mtime();
+
+    if let Some(digest) = digest {
+        if size == digest.size && mtime == digest.mtime {
+            return Ok((digest, None));
+        }
+    }
+
+    let mut contents = String::new();
+    file.read_to_string(&mut contents).await?;
+    let hash = hash128(contents.as_bytes());
+    let new_digest = Digest { mtime, size, hash };
+    if let Some(digest) = digest {
+        if hash == digest.hash {
+            return Ok((new_digest, None));
+        }
+    }
+
+    Ok((new_digest, Some(contents)))
 }

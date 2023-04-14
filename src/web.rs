@@ -1,19 +1,39 @@
 use std::{
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::Arc,
 };
 
-use tracing::debug;
+use serde::Deserialize;
+use tracing::{debug, warn};
 
-use crate::{markdown::markdown, sass::sass};
+use crate::{
+    cache::{Cachable, Cache},
+    markdown::markdown,
+    sass::sass,
+};
 
-// No dependency on Hyper or Axum
+// No dependency on the webserver
 
-pub struct App {}
+pub struct App {
+    config: Cache<Arc<Config>>,
+}
 
 impl App {
     pub fn new() -> Self {
-        App {}
+        App {
+            config: Cache::new("_config.toml".into(), Arc::new(Config::default())),
+        }
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct Config {
+    allowed_extensions: Vec<String>,
+}
+
+impl Cachable for Config {
+    fn recompute(src: &str) -> anyhow::Result<Self> {
+        Ok(toml::from_str(src)?)
     }
 }
 
@@ -38,12 +58,29 @@ pub enum MyError {
 
 pub type MyResult = Result<MyResponse, MyError>;
 
-pub async fn web(_app: Arc<Mutex<App>>, req: MyRequest<'_>) -> MyResult {
-    debug!("Request: {req:?}");
+pub async fn web(app: Arc<App>, req: MyRequest<'_>) -> MyResult {
+    debug!("Request: {:?}", req);
     let MyRequest::Get(uri_path) = req;
 
     let _ends_with_slash = uri_path.ends_with('/');
-    let _p = to_components(uri_path).ok_or(MyError::NotFound)?;
+    let components = to_components(uri_path).ok_or(MyError::NotFound)?;
+
+    for c in &components {
+        if c.is_empty() || c.starts_with('.') || c.starts_with('_') {
+            return Err(MyError::NotFound);
+        }
+    }
+    if let Some(_c) = components.last() {}
+
+    // Reloads config
+    let config = match app.config.reload().await {
+        Ok(cfg) => cfg,
+        Err((cfg, err)) => {
+            warn!("Error reloading `{}`: {}", app.config.path().display(), err);
+            cfg
+        }
+    };
+    debug!("Extensions: {:?}", config.allowed_extensions);
 
     if !uri_path.starts_with('/') {
         Err(MyError::NotFound)
@@ -77,13 +114,24 @@ fn to_components(url: &str) -> Option<Vec<&str>> {
     if url.contains("//") {
         return None;
     }
-    Some(
-        url.strip_prefix('/')?
-            .strip_suffix('/')
-            .unwrap_or(url)
-            .split('/')
-            .collect(),
-    )
+    let url = url.strip_prefix('/')?;
+    if url.is_empty() {
+        return Some(Vec::new());
+    }
+    let url = url.strip_suffix('/').unwrap_or(url);
+    let v = url.split('/').collect();
+    Some(v)
+}
+
+#[test]
+fn test_to_components() {
+    assert_eq!(to_components(""), None);
+    assert_eq!(to_components("bla"), None);
+    assert_eq!(to_components("/"), Some(vec![]));
+    assert_eq!(to_components("/bla"), Some(vec!["bla"]));
+    assert_eq!(to_components("/bla/"), Some(vec!["bla"]));
+    assert_eq!(to_components("/bla/blo"), Some(vec!["bla", "blo"]));
+    assert_eq!(to_components("/bla/blo/"), Some(vec!["bla", "blo"]));
 }
 
 pub async fn slurp(path: impl AsRef<Path>) -> Result<String, MyError> {

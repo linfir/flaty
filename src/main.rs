@@ -1,9 +1,4 @@
-use std::{
-    convert::Infallible,
-    net::ToSocketAddrs,
-    path::Path,
-    sync::{Arc, Mutex},
-};
+use std::{convert::Infallible, net::ToSocketAddrs, path::Path, sync::Arc};
 
 use anyhow::{anyhow, Context};
 use clap::Parser;
@@ -51,7 +46,7 @@ async fn main() -> anyhow::Result<()> {
         .next()
         .ok_or_else(|| anyhow!("cannot resolve server address"))?;
 
-    let app = Arc::new(Mutex::new(App::new()));
+    let app = Arc::new(App::new());
 
     let make_svc = make_service_fn(move |_conn| {
         let app = app.clone();
@@ -70,7 +65,7 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn handler(req: Request<Body>, app: Arc<Mutex<App>>) -> Response<Body> {
+async fn handler(req: Request<Body>, app: Arc<App>) -> Response<Body> {
     let method = req.method();
     let uri_path = req.uri().path();
 

@@ -1,6 +1,7 @@
-use std::{convert::Infallible, net::ToSocketAddrs, path::Path, sync::Arc};
+use std::{convert::Infallible, net::ToSocketAddrs, sync::Arc};
 
 use anyhow::{anyhow, Context};
+use camino::{Utf8Path, Utf8PathBuf};
 use clap::Parser;
 use hyper::{
     service::{make_service_fn, service_fn},
@@ -28,7 +29,7 @@ struct Args {
     port: u16,
     /// Data directory
     #[arg(short, long, default_value_t = {".".into()})]
-    directory: String,
+    directory: Utf8PathBuf,
 }
 
 #[tokio::main]
@@ -84,9 +85,7 @@ async fn handler(req: Request<Body>, app: Arc<App>) -> Response<Body> {
             web::MyError::NotFound => not_found(),
             web::MyError::InvalidScss => internal_error("Invalid SCSS"),
             web::MyError::Internal(msg) => internal_error(msg),
-            web::MyError::CannotRead(f) => {
-                internal_error(format!("Cannot read file `{}`", f.display()))
-            }
+            web::MyError::CannotRead(f) => internal_error(format!("Cannot read file `{}`", f)),
         },
     }
 }
@@ -120,7 +119,7 @@ fn internal_error(msg: impl Into<Body>) -> Response<Body> {
         .unwrap()
 }
 
-async fn serve_file(path: &Path) -> Response<Body> {
+async fn serve_file(path: &Utf8Path) -> Response<Body> {
     match File::open(path).await {
         Ok(file) => {
             let mime = mime_guess::from_path(path).first_or_octet_stream();

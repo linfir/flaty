@@ -1,11 +1,7 @@
-use std::{
-    io,
-    os::unix::prelude::MetadataExt,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{io, os::unix::prelude::MetadataExt, sync::Arc};
 
 use anyhow::{Context, Error, Result};
+use camino::{Utf8Path, Utf8PathBuf};
 use parking_lot::Mutex;
 use tokio::{fs::File, io::AsyncReadExt, time::Instant};
 use tracing::debug;
@@ -24,7 +20,7 @@ impl<T: Cachable> Cachable for Arc<T> {
 }
 
 pub struct Cache<T> {
-    path: PathBuf,
+    path: Utf8PathBuf,
     mutex: Mutex<Cached<T>>,
 }
 
@@ -35,7 +31,7 @@ struct Cached<T> {
 }
 
 impl<T> Cache<T> {
-    pub fn new(path: PathBuf, value: T) -> Self {
+    pub fn new(path: Utf8PathBuf, value: T) -> Self {
         Cache {
             path,
             mutex: Mutex::new(Cached {
@@ -67,7 +63,7 @@ impl<T> Cache<T> {
 
         match load_file(&self.path, digest)
             .await
-            .with_context(|| format!("Error reading file `{}`", self.path.display()))
+            .with_context(|| format!("Error reading file `{}`", self.path))
         {
             Ok((digest, None)) => {
                 self.lock_and_update_last_check();
@@ -82,7 +78,7 @@ impl<T> Cache<T> {
                 Err((value, err))
             }
             Ok((digest, Some(contents))) => {
-                debug!("Reloading file `{}`", self.path.display());
+                debug!("Reloading file `{}`", self.path);
                 match f(&contents) {
                     Ok(value) => {
                         let value2 = value.clone();
@@ -104,7 +100,7 @@ impl<T> Cache<T> {
         }
     }
 
-    pub fn path(&self) -> &Path {
+    pub fn path(&self) -> &Utf8Path {
         &self.path
     }
 
@@ -123,7 +119,10 @@ struct Digest {
     hash: u128,
 }
 
-async fn load_file(path: &Path, digest: Option<Digest>) -> io::Result<(Digest, Option<String>)> {
+async fn load_file(
+    path: &Utf8Path,
+    digest: Option<Digest>,
+) -> io::Result<(Digest, Option<String>)> {
     let mut file = File::open(path).await?;
     let meta = file.metadata().await?;
     let size = meta.size();

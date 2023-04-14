@@ -1,8 +1,6 @@
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::sync::Arc;
 
+use camino::{Utf8Path, Utf8PathBuf};
 use serde::Deserialize;
 use tracing::{debug, warn};
 
@@ -45,14 +43,14 @@ pub enum MyRequest<'a> {
 pub enum MyResponse {
     Html(String),
     Css(String),
-    File(PathBuf),
+    File(Utf8PathBuf),
     Redirect(String),
 }
 
 pub enum MyError {
     NotFound,
     InvalidScss,
-    CannotRead(PathBuf),
+    CannotRead(Utf8PathBuf),
     Internal(String),
 }
 
@@ -76,7 +74,7 @@ pub async fn web(app: Arc<App>, req: MyRequest<'_>) -> MyResult {
     let config = match app.config.reload().await {
         Ok(cfg) => cfg,
         Err((cfg, err)) => {
-            warn!("Error reloading `{}`: {}", app.config.path().display(), err);
+            warn!("Error reloading `{}`: {}", app.config.path(), err);
             cfg
         }
     };
@@ -134,7 +132,7 @@ fn test_to_components() {
     assert_eq!(to_components("/bla/blo/"), Some(vec!["bla", "blo"]));
 }
 
-pub async fn slurp(path: impl AsRef<Path>) -> Result<String, MyError> {
+pub async fn slurp(path: impl AsRef<Utf8Path>) -> Result<String, MyError> {
     let path = path.as_ref();
     tokio::fs::read_to_string(path)
         .await

@@ -10,6 +10,7 @@ keywords = ["http", "web", "server", "cms"]
 
 [dependencies]
 anyhow = "1.0.70"
+camino = "1.1.4"
 clap = { version = "4.2.2", features = ["derive"] }
 handlebars = "4.3.6"
 hyper = { version = "0.14.26", features = ["server", "http1", "tcp", "stream"] }

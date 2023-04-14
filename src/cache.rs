@@ -1,6 +1,6 @@
 use std::{io, os::unix::prelude::MetadataExt, sync::Arc};
 
-use anyhow::{Context, Error, Result};
+use anyhow::{Error, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use parking_lot::Mutex;
 use tokio::{fs::File, io::AsyncReadExt, time::Instant};
@@ -42,11 +42,6 @@ impl<T> Cache<T> {
         }
     }
 
-    fn lock_and_update_last_check(&self) {
-        let mut lock = self.mutex.lock();
-        lock.last_check = Some(Instant::now());
-    }
-
     pub async fn reload_with(&self, f: impl FnOnce(&str) -> Result<T>) -> Result<T, (T, Error)>
     where
         T: Clone,
@@ -61,12 +56,8 @@ impl<T> Cache<T> {
             (lock.digest, lock.value.clone())
         };
 
-        match load_file(&self.path, digest)
-            .await
-            .with_context(|| format!("Error reading file `{}`", self.path))
-        {
+        match load_file(&self.path, digest).await {
             Ok((digest, None)) => {
-                self.lock_and_update_last_check();
                 let mut lock = self.mutex.lock();
                 lock.last_check = Some(Instant::now());
                 lock.digest = Some(digest);
@@ -75,6 +66,7 @@ impl<T> Cache<T> {
             Err(err) => {
                 let mut lock = self.mutex.lock();
                 lock.last_check = Some(Instant::now());
+                let err = Error::from(err).context(format!("cannot read `{}`", &self.path));
                 Err((value, err))
             }
             Ok((digest, Some(contents))) => {
@@ -89,10 +81,10 @@ impl<T> Cache<T> {
                         Ok(value2)
                     }
                     Err(err) => {
-                        self.lock_and_update_last_check();
                         let mut lock = self.mutex.lock();
                         lock.last_check = Some(Instant::now());
                         lock.digest = Some(digest);
+                        let err = err.context(format!("cannot process `{}`", &self.path));
                         Err((value, err))
                     }
                 }
@@ -100,6 +92,7 @@ impl<T> Cache<T> {
         }
     }
 
+    #[allow(unused)]
     pub fn path(&self) -> &Utf8Path {
         &self.path
     }

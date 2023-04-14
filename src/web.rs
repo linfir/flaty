@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::Deserialize;
@@ -8,6 +8,7 @@ use crate::{
     cache::{Cachable, Cache},
     markdown::markdown,
     sass::sass,
+    url::UrlPath,
 };
 
 // No dependency on the webserver
@@ -24,20 +25,29 @@ impl App {
     }
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default)]
 struct Config {
-    allowed_extensions: Vec<String>,
+    extensions: HashSet<String>,
+}
+
+#[derive(Deserialize)]
+struct ConfigFile {
+    extensions: Vec<String>,
 }
 
 impl Cachable for Config {
     fn recompute(src: &str) -> anyhow::Result<Self> {
-        Ok(toml::from_str(src)?)
+        let cf: ConfigFile = toml::from_str(src)?;
+        Ok(Config {
+            extensions: cf.extensions.into_iter().collect(),
+        })
     }
 }
 
 #[derive(Debug)]
+#[allow(clippy::upper_case_acronyms)]
 pub enum MyRequest<'a> {
-    Get(&'a str),
+    GET(&'a str),
 }
 
 pub enum MyResponse {
@@ -58,83 +68,64 @@ pub type MyResult = Result<MyResponse, MyError>;
 
 pub async fn web(app: Arc<App>, req: MyRequest<'_>) -> MyResult {
     debug!("Request: {:?}", req);
-    let MyRequest::Get(uri_path) = req;
-
-    let _ends_with_slash = uri_path.ends_with('/');
-    let components = to_components(uri_path).ok_or(MyError::NotFound)?;
-
-    for c in &components {
-        if c.is_empty() || c.starts_with('.') || c.starts_with('_') {
-            return Err(MyError::NotFound);
-        }
-    }
-    if let Some(_c) = components.last() {}
+    let MyRequest::GET(url) = req;
+    let url = UrlPath::new(url).ok_or(MyError::NotFound)?;
+    debug!(" - url {:?}", url);
 
     // Reloads config
     let config = match app.config.reload().await {
         Ok(cfg) => cfg,
         Err((cfg, err)) => {
-            warn!("Error reloading `{}`: {}", app.config.path(), err);
+            warn!("Error: {:?}", err);
             cfg
         }
     };
-    debug!("Extensions: {:?}", config.allowed_extensions);
 
-    if !uri_path.starts_with('/') {
-        Err(MyError::NotFound)
-    } else if uri_path == "/default.css" {
+    if url.has_final_slash() {
+        let html = render_page(url).await?;
+        return Ok(MyResponse::Html(html));
+    }
+
+    if url.path() == "/default.css" {
         let doc = slurp("_style/default.scss").await?;
         let css = sass(doc).await?;
-        Ok(MyResponse::Css(css))
-    } else if uri_path == "/heart.svg" {
-        Ok(MyResponse::File("heart.svg".into()))
-    } else if uri_path == "/zero" {
-        Ok(MyResponse::File("zero".into()))
-    } else if uri_path.ends_with('/') {
-        let doc = slurp(&format!("{}page.md", &uri_path[1..])).await?;
-        let md = markdown(&doc).map_err(|_| MyError::NotFound)?;
-
-        let tpl = slurp("_style/default.html").await?;
-        let hbs = handlebars::Handlebars::new();
-        let html = hbs
-            .render_template(&tpl, &md)
-            .map_err(|_| MyError::Internal("invalid template".into()))?;
-
-        Ok(MyResponse::Html(html))
-    } else if uri_path == "/page1" {
-        Ok(MyResponse::Redirect("/page1/".into()))
-    } else {
-        Err(MyError::NotFound)
+        return Ok(MyResponse::Css(css));
     }
+
+    match url.extension() {
+        Some(ext) if config.extensions.contains(ext) => {
+            return Ok(MyResponse::File(url.relative_path().into()));
+        }
+        _ => (),
+    }
+
+    // TODO: instead of checking existence, read, process and cache
+    if tokio::fs::try_exists(format!("{}/page.md", url.relative_path()))
+        .await
+        .unwrap_or(false)
+    {
+        return Ok(MyResponse::Redirect(format!("{}/", url.path())));
+    }
+
+    Err(MyError::NotFound)
 }
 
-fn to_components(url: &str) -> Option<Vec<&str>> {
-    if url.contains("//") {
-        return None;
-    }
-    let url = url.strip_prefix('/')?;
-    if url.is_empty() {
-        return Some(Vec::new());
-    }
-    let url = url.strip_suffix('/').unwrap_or(url);
-    let v = url.split('/').collect();
-    Some(v)
-}
-
-#[test]
-fn test_to_components() {
-    assert_eq!(to_components(""), None);
-    assert_eq!(to_components("bla"), None);
-    assert_eq!(to_components("/"), Some(vec![]));
-    assert_eq!(to_components("/bla"), Some(vec!["bla"]));
-    assert_eq!(to_components("/bla/"), Some(vec!["bla"]));
-    assert_eq!(to_components("/bla/blo"), Some(vec!["bla", "blo"]));
-    assert_eq!(to_components("/bla/blo/"), Some(vec!["bla", "blo"]));
-}
-
-pub async fn slurp(path: impl AsRef<Utf8Path>) -> Result<String, MyError> {
+async fn slurp(path: impl AsRef<Utf8Path>) -> Result<String, MyError> {
     let path = path.as_ref();
     tokio::fs::read_to_string(path)
         .await
         .map_err(|_| MyError::CannotRead(path.to_owned()))
+}
+
+async fn render_page(url: UrlPath<'_>) -> Result<String, MyError> {
+    let doc = slurp(&format!("{}page.md", url.relative_path())).await?;
+    let md = markdown(&doc).map_err(|_| MyError::NotFound)?;
+
+    let tpl = slurp("_style/default.html").await?;
+    let hbs = handlebars::Handlebars::new();
+    let html = hbs
+        .render_template(&tpl, &md)
+        .map_err(|_| MyError::Internal("invalid template".into()))?;
+
+    Ok(html)
 }

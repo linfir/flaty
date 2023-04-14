@@ -16,6 +16,7 @@ use crate::web::{App, MyRequest};
 mod cache;
 mod markdown;
 mod sass;
+mod url;
 mod web;
 
 #[derive(Parser)]
@@ -74,7 +75,7 @@ async fn handler(req: Request<Body>, app: Arc<App>) -> Response<Body> {
         return not_found();
     }
 
-    match web::web(app, MyRequest::Get(uri_path)).await {
+    match web::web(app, MyRequest::GET(uri_path)).await {
         Ok(r) => match r {
             web::MyResponse::Html(x) => response_ok(x, "text/html"),
             web::MyResponse::Css(x) => response_ok(x, "text/css"),

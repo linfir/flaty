@@ -68,7 +68,7 @@ async fn main() -> anyhow::Result<()> {
             .expect("failed to install Ctrl+C handler")
     });
 
-    info!("Listening on http://{}/", local_addr);
+    info!("listening on http://{}/", local_addr);
     server.await?;
     Ok(())
 }

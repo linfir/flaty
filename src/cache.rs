@@ -1,29 +1,28 @@
-use std::{io, os::unix::prelude::MetadataExt, sync::Arc};
+use std::{io, os::unix::prelude::MetadataExt, path::Path, sync::Arc};
 
 use anyhow::{Error, Result};
-use camino::{Utf8Path, Utf8PathBuf};
 use parking_lot::Mutex;
 use tokio::{fs::File, io::AsyncReadExt, time::Instant};
 use tracing::debug;
 use twox_hash::xxh3::hash128;
 
 pub trait Cachable {
-    fn recompute(src: &str) -> Result<Self>
+    fn compute(src: &str) -> Result<Self>
     where
         Self: Sized;
 }
 
 impl<T: Cachable> Cachable for Arc<T> {
-    fn recompute(src: &str) -> Result<Self> {
-        T::recompute(src).map(Arc::new)
+    fn compute(src: &str) -> Result<Self> {
+        T::compute(src).map(Arc::new)
     }
 }
 
 pub struct Cache<T> {
-    path: Utf8PathBuf,
     mutex: Mutex<Cached<T>>,
 }
 
+#[derive(Default)]
 struct Cached<T> {
     last_check: Option<Instant>,
     digest: Option<Digest>,
@@ -31,21 +30,20 @@ struct Cached<T> {
 }
 
 impl<T> Cache<T> {
-    pub fn new(path: Utf8PathBuf, value: T) -> Self {
-        Cache {
-            path,
-            mutex: Mutex::new(Cached {
-                last_check: None,
-                digest: None,
-                value,
-            }),
+    pub fn new() -> Self
+    where
+        T: Default,
+    {
+        Self {
+            mutex: Mutex::new(Cached::default()),
         }
     }
 
-    pub async fn reload_with(&self, f: impl FnOnce(&str) -> Result<T>) -> Result<T, (T, Error)>
+    pub async fn load(&self, path: impl AsRef<Path>) -> Result<T, (T, Error)>
     where
-        T: Clone,
+        T: Cachable + Clone,
     {
+        let path = path.as_ref();
         let (digest, value) = {
             let lock = self.mutex.lock();
             if let Some(last_access) = lock.last_check {
@@ -56,7 +54,7 @@ impl<T> Cache<T> {
             (lock.digest, lock.value.clone())
         };
 
-        match load_file(&self.path, digest).await {
+        match load_file(path, digest).await {
             Ok((digest, None)) => {
                 let mut lock = self.mutex.lock();
                 lock.last_check = Some(Instant::now());
@@ -66,12 +64,12 @@ impl<T> Cache<T> {
             Err(err) => {
                 let mut lock = self.mutex.lock();
                 lock.last_check = Some(Instant::now());
-                let err = Error::from(err).context(format!("cannot read `{}`", &self.path));
+                let err = Error::from(err).context(format!("cannot read `{}`", path.display()));
                 Err((value, err))
             }
             Ok((digest, Some(contents))) => {
-                debug!("Reloading file `{}`", self.path);
-                match f(&contents) {
+                debug!("Reloading file `{}`", path.display());
+                match T::compute(&contents) {
                     Ok(value) => {
                         let value2 = value.clone();
                         let mut lock = self.mutex.lock();
@@ -84,24 +82,12 @@ impl<T> Cache<T> {
                         let mut lock = self.mutex.lock();
                         lock.last_check = Some(Instant::now());
                         lock.digest = Some(digest);
-                        let err = err.context(format!("cannot process `{}`", &self.path));
+                        let err = err.context(format!("cannot process `{}`", path.display()));
                         Err((value, err))
                     }
                 }
             }
         }
-    }
-
-    #[allow(unused)]
-    pub fn path(&self) -> &Utf8Path {
-        &self.path
-    }
-
-    pub async fn reload(&self) -> Result<T, (T, Error)>
-    where
-        T: Cachable + Clone,
-    {
-        self.reload_with(T::recompute).await
     }
 }
 
@@ -112,10 +98,7 @@ struct Digest {
     hash: u128,
 }
 
-async fn load_file(
-    path: &Utf8Path,
-    digest: Option<Digest>,
-) -> io::Result<(Digest, Option<String>)> {
+async fn load_file(path: &Path, digest: Option<Digest>) -> io::Result<(Digest, Option<String>)> {
     let mut file = File::open(path).await?;
     let meta = file.metadata().await?;
     let size = meta.size();

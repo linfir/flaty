@@ -2,7 +2,7 @@ use std::{collections::HashSet, sync::Arc};
 
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::Deserialize;
-use tracing::{debug, warn};
+use tracing::{debug, error};
 
 use crate::{
     cache::{Cachable, Cache},
@@ -20,7 +20,7 @@ pub struct App {
 impl App {
     pub fn new() -> Self {
         App {
-            config: Cache::new("_config.toml".into(), Arc::new(Config::default())),
+            config: Cache::new(),
         }
     }
 }
@@ -36,7 +36,7 @@ struct ConfigFile {
 }
 
 impl Cachable for Config {
-    fn recompute(src: &str) -> anyhow::Result<Self> {
+    fn compute(src: &str) -> anyhow::Result<Self> {
         let cf: ConfigFile = toml::from_str(src)?;
         Ok(Config {
             extensions: cf.extensions.into_iter().collect(),
@@ -67,16 +67,15 @@ pub enum MyError {
 pub type MyResult = Result<MyResponse, MyError>;
 
 pub async fn web(app: Arc<App>, req: MyRequest<'_>) -> MyResult {
-    debug!("Request: {:?}", req);
+    debug!("request: {:?}", req);
     let MyRequest::GET(url) = req;
     let url = UrlPath::new(url).ok_or(MyError::NotFound)?;
-    debug!(" - url {:?}", url);
 
     // Reloads config
-    let config = match app.config.reload().await {
+    let config = match app.config.load("_config.toml").await {
         Ok(cfg) => cfg,
         Err((cfg, err)) => {
-            warn!("Error: {:?}", err);
+            error!("{:?}", err);
             cfg
         }
     };

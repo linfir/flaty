@@ -5,7 +5,7 @@ use serde::Deserialize;
 use tracing::{debug, error};
 
 use crate::{
-    cache::{Cachable, Cache},
+    cache::{Cache, Cacheable},
     markdown::markdown,
     sass::sass,
     url::UrlPath,
@@ -20,7 +20,7 @@ pub struct App {
 impl App {
     pub fn new() -> Self {
         App {
-            config: Cache::new(),
+            config: Cache::new("_config.toml"),
         }
     }
 }
@@ -35,7 +35,7 @@ struct ConfigFile {
     extensions: Vec<String>,
 }
 
-impl Cachable for Config {
+impl Cacheable for Config {
     fn compute(src: &str) -> anyhow::Result<Self> {
         let cf: ConfigFile = toml::from_str(src)?;
         Ok(Config {
@@ -72,7 +72,7 @@ pub async fn web(app: Arc<App>, req: MyRequest<'_>) -> MyResult {
     let url = UrlPath::new(url).ok_or(MyError::NotFound)?;
 
     // Reloads config
-    let config = match app.config.load("_config.toml").await {
+    let config = match app.config.load().await {
         Ok(cfg) => cfg,
         Err((cfg, err)) => {
             error!("{:?}", err);

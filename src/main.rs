@@ -61,8 +61,14 @@ async fn main() -> anyhow::Result<()> {
     });
 
     let server = Server::bind(&addr).serve(make_svc);
-    info!("Listening on http://{}/", server.local_addr());
+    let local_addr = server.local_addr();
+    let server = server.with_graceful_shutdown(async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler")
+    });
 
+    info!("Listening on http://{}/", local_addr);
     server.await?;
     Ok(())
 }

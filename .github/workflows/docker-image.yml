@@ -25,3 +25,12 @@ jobs:
       with:
         push: true
         tags: ghcr.io/${{ github.repository }}:latest
+
+    - name: Delete all containers from repository without tags
+      uses: Chizkiyahu/delete-untagged-ghcr-action@v2
+      with:
+          token: ${{ secrets.PAT_TOKEN }}
+          repository_owner: ${{ github.repository_owner }}
+          repository: ${{ github.repository }}
+          untagged_only: true
+          owner_type: user

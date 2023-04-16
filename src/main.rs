@@ -1,14 +1,18 @@
-use std::{convert::Infallible, net::ToSocketAddrs, sync::Arc};
+use std::{net::ToSocketAddrs, sync::Arc};
 
 use anyhow::{anyhow, Context};
+use axum::{
+    body::Body,
+    debug_handler,
+    extract::State,
+    http::{Method, Request, StatusCode},
+    response::{IntoResponse, Response},
+    Router, Server,
+};
 use camino::{Utf8Path, Utf8PathBuf};
 use clap::Parser;
-use hyper::{
-    service::{make_service_fn, service_fn},
-    Body, Method, Request, Response, Server, StatusCode,
-};
-use tokio::fs::File;
-use tokio_util::codec::{BytesCodec, FramedRead};
+use tower::ServiceExt;
+use tower_http::services::ServeFile;
 use tracing::info;
 
 use crate::web::{App, MyRequest};
@@ -48,19 +52,11 @@ async fn main() -> anyhow::Result<()> {
         .next()
         .ok_or_else(|| anyhow!("cannot resolve server address"))?;
 
-    let app = Arc::new(App::new());
+    let app_state = Arc::new(App::new());
 
-    let make_svc = make_service_fn(move |_conn| {
-        let app = app.clone();
-        async move {
-            Ok::<_, Infallible>(service_fn(move |req| {
-                let app = app.clone();
-                async { Ok::<_, Infallible>(handler(req, app).await) }
-            }))
-        }
-    });
+    let app = Router::new().fallback(handler).with_state(app_state);
 
-    let server = Server::bind(&addr).serve(make_svc);
+    let server = Server::bind(&addr).serve(app.into_make_service());
     let local_addr = server.local_addr();
     let server = server.with_graceful_shutdown(async {
         tokio::signal::ctrl_c()
@@ -73,7 +69,8 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn handler(req: Request<Body>, app: Arc<App>) -> Response<Body> {
+#[debug_handler]
+async fn handler(State(app): State<Arc<App>>, req: Request<Body>) -> Response {
     let method = req.method();
     let uri_path = req.uri().path();
 
@@ -85,7 +82,7 @@ async fn handler(req: Request<Body>, app: Arc<App>) -> Response<Body> {
         Ok(r) => match r {
             web::MyResponse::Html(x) => response_ok(x, "text/html"),
             web::MyResponse::Css(x) => response_ok(x, "text/css"),
-            web::MyResponse::File(f) => serve_file(&f).await,
+            web::MyResponse::File(f) => serve_file(&f, req).await,
             web::MyResponse::Redirect(url) => redirect(&url),
         },
         Err(e) => match e {
@@ -97,42 +94,31 @@ async fn handler(req: Request<Body>, app: Arc<App>) -> Response<Body> {
     }
 }
 
-fn response_ok(data: impl Into<Body>, mime: &str) -> Response<Body> {
+fn response_ok(data: impl Into<Body>, mime: &str) -> Response {
     Response::builder()
         .header("Content-Type", mime)
         .body(data.into())
         .unwrap()
+        .into_response()
 }
 
-fn not_found() -> Response<Body> {
-    Response::builder()
-        .status(StatusCode::NOT_FOUND)
-        .body(Body::empty())
-        .unwrap()
+fn not_found() -> Response {
+    (StatusCode::NOT_FOUND, ()).into_response()
 }
 
-fn redirect(url: &str) -> Response<Body> {
+fn redirect(url: &str) -> Response {
     Response::builder()
         .status(StatusCode::MOVED_PERMANENTLY)
         .header("Location", url)
         .body(Body::empty())
         .unwrap()
+        .into_response()
 }
 
-fn internal_error(msg: impl Into<Body>) -> Response<Body> {
-    Response::builder()
-        .status(StatusCode::INTERNAL_SERVER_ERROR)
-        .body(msg.into())
-        .unwrap()
+fn internal_error(msg: impl Into<String>) -> Response {
+    (StatusCode::INTERNAL_SERVER_ERROR, msg.into()).into_response()
 }
 
-async fn serve_file(path: &Utf8Path) -> Response<Body> {
-    match File::open(path).await {
-        Ok(file) => {
-            let mime = mime_guess::from_path(path).first_or_octet_stream();
-            let stream = FramedRead::new(file, BytesCodec::new());
-            response_ok(Body::wrap_stream(stream), mime.essence_str())
-        }
-        Err(_) => not_found(),
-    }
+async fn serve_file(path: &Utf8Path, req: Request<Body>) -> Response {
+    ServeFile::new(path).oneshot(req).await.into_response()
 }

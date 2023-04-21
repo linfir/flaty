@@ -18,6 +18,7 @@ use tracing::info;
 use crate::web::{App, MyRequest};
 
 mod cache;
+mod filecache;
 mod markdown;
 mod sass;
 mod url;

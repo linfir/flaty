@@ -96,6 +96,7 @@ async fn handler(State(app): State<Arc<App>>, req: Request<Body>) -> Response {
         },
         Err(e) => match e {
             web::MyError::NotFound => not_found(),
+            web::MyError::InvalidPage => internal_error("Invalid page"),
             web::MyError::InvalidScss => internal_error("Invalid SCSS"),
             web::MyError::Internal(msg) => internal_error(msg),
             web::MyError::CannotRead(f) => internal_error(format!("Cannot read file `{}`", f)),

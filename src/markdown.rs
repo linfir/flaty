@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use anyhow::anyhow;
 use pulldown_cmark::{html, Parser};
 use toml::{Table, Value};
+use tracing::debug;
 
 use crate::cache::Cacheable;
 
@@ -50,10 +51,24 @@ fn parse_header(src: &str) -> Result<(HashMap<String, String>, &str), MarkdownEr
             let mut h = HashMap::new();
             for (k, v) in doc.into_iter() {
                 match v {
-                    Value::String(v) => {
-                        h.insert(k, v);
+                    Value::String(s) => {
+                        h.insert(k, s);
                     }
-                    _ => return Err(MarkdownError::InvalidHeader),
+                    Value::Integer(n) => {
+                        h.insert(k, n.to_string());
+                    }
+                    Value::Float(n) => {
+                        h.insert(k, n.to_string());
+                    }
+                    Value::Boolean(b) => {
+                        h.insert(k, b.to_string());
+                    }
+                    Value::Datetime(d) => {
+                        h.insert(k, d.to_string());
+                    }
+                    Value::Array(_) | Value::Table(_) => {
+                        debug!("ignoring non-scalar frontmatter field `{}`", k);
+                    }
                 }
             }
             Ok((h, b))

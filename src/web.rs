@@ -77,6 +77,7 @@ pub enum MyResponse {
 
 pub enum MyError {
     NotFound,
+    InvalidPage,
     InvalidScss,
     CannotRead(Utf8PathBuf),
     Internal(String),
@@ -149,9 +150,10 @@ async fn render_page(app: &App, url: UrlPath<'_>) -> Result<String, MyError> {
     }
     let page = match app.pages.load(&page_path).await {
         Ok(page) => page,
+        // The file exists (checked above), so a load failure is a bad page.
         Err((_, err)) => {
             error!("{:?}", err);
-            return Err(MyError::NotFound);
+            return Err(MyError::InvalidPage);
         }
     };
 

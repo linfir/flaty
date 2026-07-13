@@ -44,8 +44,9 @@ async fn main() -> anyhow::Result<()> {
 
     let args = Args::parse();
 
-    std::env::set_current_dir(&args.directory)
-        .with_context(|| format!("Cannot chdir to `{}`", args.directory))?;
+    if !args.directory.is_dir() {
+        return Err(anyhow!("data directory `{}` not found", args.directory));
+    }
 
     let addr = (args.bind.as_str(), args.port)
         .to_socket_addrs()
@@ -53,7 +54,7 @@ async fn main() -> anyhow::Result<()> {
         .next()
         .ok_or_else(|| anyhow!("cannot resolve server address"))?;
 
-    let app_state = Arc::new(App::new());
+    let app_state = Arc::new(App::new(args.directory));
 
     let app = Router::new().fallback(handler).with_state(app_state);
 

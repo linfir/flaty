@@ -14,6 +14,7 @@ use crate::{
 // No dependency on the webserver
 
 pub struct App {
+    root: Utf8PathBuf,
     config: Cache<Arc<Config>>,
     pages: CacheMap<Arc<Page>>,
     templates: CacheMap<Arc<Template>>,
@@ -21,9 +22,10 @@ pub struct App {
 }
 
 impl App {
-    pub fn new() -> Self {
+    pub fn new(root: Utf8PathBuf) -> Self {
         App {
-            config: Cache::new("_config.toml"),
+            config: Cache::new(root.join("_config.toml")),
+            root,
             pages: CacheMap::default(),
             templates: CacheMap::default(),
             styles: CacheMap::default(),
@@ -104,7 +106,7 @@ pub async fn web(app: Arc<App>, req: MyRequest<'_>) -> MyResult {
     if let Some(name) = url.path().strip_prefix('/').filter(|p| !p.contains('/')) {
         if let Some(stem) = name.strip_suffix(".css") {
             if valid_asset_name(stem) {
-                let scss_path = format!("_style/{stem}.scss");
+                let scss_path = app.root.join(format!("_style/{stem}.scss"));
                 // Don't create cache entries for missing stylesheets.
                 if !tokio::fs::try_exists(&scss_path).await.unwrap_or(false) {
                     return Err(MyError::NotFound);
@@ -123,13 +125,13 @@ pub async fn web(app: Arc<App>, req: MyRequest<'_>) -> MyResult {
 
     match url.extension() {
         Some(ext) if config.extensions.contains(ext) => {
-            return Ok(MyResponse::File(url.relative_path().into()));
+            return Ok(MyResponse::File(app.root.join(url.relative_path())));
         }
         _ => (),
     }
 
     // TODO: instead of checking existence, read, process and cache
-    if tokio::fs::try_exists(format!("{}/page.md", url.relative_path()))
+    if tokio::fs::try_exists(app.root.join(format!("{}/page.md", url.relative_path())))
         .await
         .unwrap_or(false)
     {
@@ -140,7 +142,7 @@ pub async fn web(app: Arc<App>, req: MyRequest<'_>) -> MyResult {
 }
 
 async fn render_page(app: &App, url: UrlPath<'_>) -> Result<String, MyError> {
-    let page_path = format!("{}page.md", url.relative_path());
+    let page_path = app.root.join(format!("{}page.md", url.relative_path()));
     // Don't create cache entries for missing pages.
     if !tokio::fs::try_exists(&page_path).await.unwrap_or(false) {
         return Err(MyError::NotFound);
@@ -157,12 +159,12 @@ async fn render_page(app: &App, url: UrlPath<'_>) -> Result<String, MyError> {
     if !valid_asset_name(template) {
         return Err(MyError::NotFound);
     }
-    let tpl_path = format!("_style/{template}.html");
+    let tpl_path = app.root.join(format!("_style/{template}.html"));
     let tpl = match app.templates.load(&tpl_path).await {
         Ok(tpl) => tpl,
         Err((_, err)) => {
             error!("{:?}", err);
-            return Err(MyError::CannotRead(tpl_path.into()));
+            return Err(MyError::CannotRead(tpl_path));
         }
     };
 

@@ -1,5 +1,9 @@
-use std::{collections::HashSet, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
+use base64::Engine as _;
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::Deserialize;
 use tracing::{debug, error};
@@ -50,11 +54,20 @@ impl Cacheable for Template {
 #[derive(Debug, Default)]
 struct Config {
     extensions: HashSet<String>,
+    // Path prefix -> users allowed to access it (HTTP Basic auth).
+    protected: HashMap<String, Vec<String>>,
+    // Plain-text credentials (user -> password).
+    users: HashMap<String, String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 struct ConfigFile {
+    #[serde(default)]
     extensions: Vec<String>,
+    #[serde(default)]
+    protected: HashMap<String, Vec<String>>,
+    #[serde(default)]
+    users: HashMap<String, String>,
 }
 
 impl Cacheable for Config {
@@ -62,14 +75,18 @@ impl Cacheable for Config {
         let cf: ConfigFile = toml::from_str(src)?;
         Ok(Config {
             extensions: cf.extensions.into_iter().collect(),
+            protected: cf.protected,
+            users: cf.users,
         })
     }
 }
 
-#[derive(Debug)]
 #[allow(clippy::upper_case_acronyms)]
 pub enum MyRequest<'a> {
-    GET(&'a str),
+    GET {
+        path: &'a str,
+        authorization: Option<&'a str>,
+    },
 }
 
 pub enum MyResponse {
@@ -82,6 +99,7 @@ pub enum MyResponse {
 #[derive(Debug)]
 pub enum MyError {
     NotFound,
+    Unauthorized,
     InvalidPage,
     InvalidScss,
     CannotRead(Utf8PathBuf),
@@ -91,9 +109,12 @@ pub enum MyError {
 pub type MyResult = Result<MyResponse, MyError>;
 
 pub async fn web(app: Arc<App>, req: MyRequest<'_>) -> MyResult {
-    debug!("request: {:?}", req);
-    let MyRequest::GET(url) = req;
-    let url = UrlPath::new(url).ok_or(MyError::NotFound)?;
+    let MyRequest::GET {
+        path,
+        authorization,
+    } = req;
+    debug!("GET {path}");
+    let url = UrlPath::new(path).ok_or(MyError::NotFound)?;
 
     // Reloads config
     let config = match app.config.load().await {
@@ -103,6 +124,10 @@ pub async fn web(app: Arc<App>, req: MyRequest<'_>) -> MyResult {
             cfg
         }
     };
+
+    if !authorized(&config, url.path(), authorization) {
+        return Err(MyError::Unauthorized);
+    }
 
     if url.has_final_slash() {
         let html = render_page(&app, url).await?;
@@ -190,6 +215,48 @@ fn valid_asset_name(name: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
+fn prefix_matches(prefix: &str, path: &str) -> bool {
+    let prefix = prefix.strip_suffix('/').unwrap_or(prefix);
+    path == prefix || path.starts_with(&format!("{prefix}/"))
+}
+
+// Users allowed at `path`, or None when the path is not protected.
+// The most specific (longest) matching prefix wins.
+fn allowed_users<'a>(config: &'a Config, path: &str) -> Option<&'a [String]> {
+    config
+        .protected
+        .iter()
+        .filter(|(prefix, _)| prefix_matches(prefix, path))
+        .max_by_key(|(prefix, _)| prefix.len())
+        .map(|(_, users)| users.as_slice())
+}
+
+// Decode a `Basic <base64>` header into (user, password).
+fn parse_basic(header: &str) -> Option<(String, String)> {
+    let (scheme, rest) = header.split_once(' ')?;
+    if !scheme.eq_ignore_ascii_case("basic") {
+        return None;
+    }
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(rest.trim())
+        .ok()?;
+    let text = String::from_utf8(decoded).ok()?;
+    let (user, pass) = text.split_once(':')?;
+    Some((user.to_owned(), pass.to_owned()))
+}
+
+// Access is allowed unless the path is protected and the credentials name an
+// allowed user with the correct password.
+fn authorized(config: &Config, path: &str, authorization: Option<&str>) -> bool {
+    let Some(allowed) = allowed_users(config, path) else {
+        return true;
+    };
+    let Some((user, pass)) = authorization.and_then(parse_basic) else {
+        return false;
+    };
+    allowed.iter().any(|u| u == &user) && config.users.get(&user).is_some_and(|p| p == &pass)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -207,7 +274,60 @@ mod tests {
     // Runs against the checked-in `example_site` (cargo test CWD = crate root).
     async fn resp(path: &str) -> MyResult {
         let app = Arc::new(App::new("example_site".into()));
-        web(app, MyRequest::GET(path)).await
+        web(
+            app,
+            MyRequest::GET {
+                path,
+                authorization: None,
+            },
+        )
+        .await
+    }
+
+    #[test]
+    fn basic_auth() {
+        let users = HashMap::from([
+            ("user1".to_string(), "pw1".to_string()),
+            ("user2".to_string(), "pw2".to_string()),
+        ]);
+        let protected = HashMap::from([
+            ("/foo".to_string(), vec!["user1".to_string()]),
+            ("/bar".to_string(), vec!["user2".to_string()]),
+            (
+                "/quz".to_string(),
+                vec!["user1".to_string(), "user2".to_string()],
+            ),
+        ]);
+        let config = Config {
+            extensions: HashSet::new(),
+            protected,
+            users,
+        };
+        // base64 of "user1:pw1" and "user2:pw2".
+        let u1 = Some("Basic dXNlcjE6cHcx");
+        let u2 = Some("Basic dXNlcjI6cHcy");
+
+        // Unprotected paths are always allowed.
+        assert!(authorized(&config, "/public", None));
+        // "/foo" (a prefix of "/foobar") must not leak access.
+        assert!(authorized(&config, "/foobar", None));
+
+        // /foo: only user1.
+        assert!(authorized(&config, "/foo", u1));
+        assert!(authorized(&config, "/foo/x", u1));
+        assert!(!authorized(&config, "/foo", u2));
+        assert!(!authorized(&config, "/foo", None));
+
+        // /bar: only user2.
+        assert!(authorized(&config, "/bar/x", u2));
+        assert!(!authorized(&config, "/bar", u1));
+
+        // /quz: either user.
+        assert!(authorized(&config, "/quz", u1));
+        assert!(authorized(&config, "/quz", u2));
+
+        // Right user, wrong password ("user1:wrong") -> denied.
+        assert!(!authorized(&config, "/quz", Some("Basic dXNlcjE6d3Jvbmc=")));
     }
 
     #[tokio::test]

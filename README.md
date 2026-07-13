@@ -102,6 +102,31 @@ extensions = ["svg", "png", "jpg", "pdf"]
 With the above, `/heart.svg` is served from `heart.svg` on disk. A request for an
 extension that is not listed returns 404.
 
+## Access control
+
+Paths can be protected with HTTP Basic auth. Each protected path prefix maps to
+the list of users allowed under it, and credentials live in a separate table:
+
+```toml
+# prefix -> users allowed at (or under) that prefix
+[protected]
+"/foo" = ["user1"]
+"/bar" = ["user2"]
+"/quz" = ["user1", "user2"]
+
+# plain-text credentials
+[users]
+user1 = "pw1"
+user2 = "pw2"
+```
+
+With the above, `/foo` is restricted to `user1`, `/bar` to `user2`, and `/quz`
+to either. Protection covers everything under a prefix -- pages, stylesheets and
+static files alike -- and when prefixes overlap, the most specific (longest)
+match applies. Passwords are stored in clear text, so this is meant for casual
+gating, not sensitive data; serve over HTTPS (for example behind a reverse
+proxy) so credentials are not sent in the clear.
+
 ## Custom error pages
 
 If present, `_style/404.html` and `_style/500.html` are served for the

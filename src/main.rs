@@ -87,7 +87,17 @@ async fn handler(State(app): State<Arc<App>>, req: Request<Body>) -> Response {
         .and_then(|v| v.to_str().ok())
         .map(str::to_owned);
 
-    match web::web(app.clone(), MyRequest::GET(uri_path)).await {
+    let authorization = req
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok());
+
+    let request = MyRequest::GET {
+        path: uri_path,
+        authorization,
+    };
+
+    match web::web(app.clone(), request).await {
         Ok(r) => match r {
             web::MyResponse::Html(x) => cached(x, "text/html", if_none_match.as_deref()),
             web::MyResponse::Css(x) => cached(x, "text/css", if_none_match.as_deref()),
@@ -100,6 +110,7 @@ async fn handler(State(app): State<Arc<App>>, req: Request<Body>) -> Response {
                 web::MyError::NotFound => {
                     error_page(&app, S::NOT_FOUND, "404.html", String::new()).await
                 }
+                web::MyError::Unauthorized => unauthorized(),
                 web::MyError::InvalidPage => {
                     error_page(
                         &app,
@@ -163,6 +174,15 @@ fn cached(body: String, mime: &str, if_none_match: Option<&str>) -> Response {
         .header(header::ETAG, &etag)
         .header(header::CACHE_CONTROL, "no-cache")
         .body(Body::from(body))
+        .unwrap()
+        .into_response()
+}
+
+fn unauthorized() -> Response {
+    Response::builder()
+        .status(StatusCode::UNAUTHORIZED)
+        .header(header::WWW_AUTHENTICATE, "Basic realm=\"flaty\"")
+        .body(Body::from("Unauthorized"))
         .unwrap()
         .into_response()
 }

@@ -12,6 +12,7 @@ publish = false
 [dependencies]
 anyhow = "1.0.70"
 axum = { version = "0.8.9", features = ["macros"] }
+base64 = "0.22"
 camino = "1.1.4"
 clap = { version = "4.2.2", features = ["derive"] }
 dashmap = "6.2.1"

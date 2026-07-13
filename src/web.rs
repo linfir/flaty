@@ -85,10 +85,14 @@ pub async fn web(app: Arc<App>, req: MyRequest<'_>) -> MyResult {
         return Ok(MyResponse::Html(html));
     }
 
-    if url.path() == "/default.css" {
-        let doc = slurp("_style/default.scss").await?;
-        let css = sass(doc).await?;
-        return Ok(MyResponse::Css(css));
+    if let Some(name) = url.path().strip_prefix('/').filter(|p| !p.contains('/')) {
+        if let Some(stem) = name.strip_suffix(".css") {
+            if valid_asset_name(stem) {
+                let doc = slurp(&format!("_style/{stem}.scss")).await?;
+                let css = sass(doc).await?;
+                return Ok(MyResponse::Css(css));
+            }
+        }
     }
 
     match url.extension() {
@@ -120,11 +124,23 @@ async fn render_page(url: UrlPath<'_>) -> Result<String, MyError> {
     let doc = slurp(&format!("{}page.md", url.relative_path())).await?;
     let md = markdown(&doc).map_err(|_| MyError::NotFound)?;
 
-    let tpl = slurp("_style/default.html").await?;
+    let template = md.get("template").map(String::as_str).unwrap_or("default");
+    if !valid_asset_name(template) {
+        return Err(MyError::NotFound);
+    }
+    let tpl = slurp(&format!("_style/{template}.html")).await?;
     let hbs = handlebars::Handlebars::new();
     let html = hbs
         .render_template(&tpl, &md)
         .map_err(|_| MyError::Internal("invalid template".into()))?;
 
     Ok(html)
+}
+
+// Frontmatter/URL supplied names must be bare identifiers, no path traversal.
+fn valid_asset_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }

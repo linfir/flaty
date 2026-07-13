@@ -8,7 +8,7 @@ lang = "fr"
 
 This is a *very simple* page.
 
-And a [link](/page1/).
+And a [link](/page1/). And an [about page](/about/) with a different layout.
 
 And an image: <img src="heart.svg" alt="heart" style="width: 2cm" />
 

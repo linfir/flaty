@@ -1,0 +1,25 @@
+$font-stack: Georgia, serif;
+$primary-color: #222;
+$accent: #2a6f97;
+
+body {
+  font: 100% $font-stack;
+  color: $primary-color;
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: 0 1rem;
+}
+
+header {
+  font-size: 1.5rem;
+  border-bottom: 2px solid $accent;
+  padding: 1rem 0;
+}
+
+footer {
+  margin-top: 2rem;
+  border-top: 1px solid $accent;
+  padding: 1rem 0;
+  color: $accent;
+  font-size: 0.85rem;
+}

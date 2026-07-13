@@ -1,7 +1,7 @@
 use std::{io, os::unix::prelude::MetadataExt, path::Path};
 
 use tokio::{fs::File, io::AsyncReadExt};
-use twox_hash::xxh3::hash128;
+use twox_hash::XxHash3_128;
 
 #[derive(Clone, Copy)]
 pub struct Digest {
@@ -27,7 +27,7 @@ pub async fn load_file(
 
     let mut contents = String::new();
     file.read_to_string(&mut contents).await?;
-    let hash = hash128(contents.as_bytes());
+    let hash = XxHash3_128::oneshot(contents.as_bytes());
     let new_digest = Digest { mtime, size, hash };
     if let Some(digest) = digest {
         if hash == digest.hash {

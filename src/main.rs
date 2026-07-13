@@ -7,7 +7,7 @@ use axum::{
     extract::State,
     http::{Method, Request, StatusCode},
     response::{IntoResponse, Response},
-    Router, Server,
+    Router,
 };
 use camino::{Utf8Path, Utf8PathBuf};
 use clap::Parser;
@@ -44,7 +44,7 @@ async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
     std::env::set_current_dir(&args.directory)
-        .with_context(|| format!("Cannot chdir to `{}`", &args.directory))?;
+        .with_context(|| format!("Cannot chdir to `{}`", args.directory))?;
 
     let addr = (args.bind.as_str(), args.port)
         .to_socket_addrs()
@@ -56,16 +56,17 @@ async fn main() -> anyhow::Result<()> {
 
     let app = Router::new().fallback(handler).with_state(app_state);
 
-    let server = Server::bind(&addr).serve(app.into_make_service());
-    let local_addr = server.local_addr();
-    let server = server.with_graceful_shutdown(async {
-        tokio::signal::ctrl_c()
-            .await
-            .expect("failed to install Ctrl+C handler")
-    });
+    let listener = tokio::net::TcpListener::bind(&addr).await?;
+    let local_addr = listener.local_addr()?;
 
     info!("listening on http://{}/", local_addr);
-    server.await?;
+    axum::serve(listener, app.into_make_service())
+        .with_graceful_shutdown(async {
+            tokio::signal::ctrl_c()
+                .await
+                .expect("failed to install Ctrl+C handler")
+        })
+        .await?;
     Ok(())
 }
 

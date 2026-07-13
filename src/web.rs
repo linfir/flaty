@@ -79,6 +79,7 @@ pub enum MyResponse {
     Redirect(String),
 }
 
+#[derive(Debug)]
 pub enum MyError {
     NotFound,
     InvalidPage,
@@ -188,4 +189,62 @@ fn valid_asset_name(name: &str) -> bool {
         && name
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn asset_names() {
+        assert!(valid_asset_name("default"));
+        assert!(valid_asset_name("a-b_c"));
+        assert!(!valid_asset_name(""));
+        assert!(!valid_asset_name(".."));
+        assert!(!valid_asset_name("a/b"));
+        assert!(!valid_asset_name("a.b"));
+    }
+
+    // Runs against the checked-in `example_site` (cargo test CWD = crate root).
+    async fn resp(path: &str) -> MyResult {
+        let app = Arc::new(App::new("example_site".into()));
+        web(app, MyRequest::GET(path)).await
+    }
+
+    #[tokio::test]
+    async fn renders_home() {
+        match resp("/").await.unwrap() {
+            MyResponse::Html(h) => assert!(h.contains("Hello")),
+            _ => panic!("expected html"),
+        }
+    }
+
+    #[tokio::test]
+    async fn renders_per_page_template() {
+        match resp("/about/").await.unwrap() {
+            MyResponse::Html(h) => assert!(h.contains("wide")),
+            _ => panic!("expected html"),
+        }
+    }
+
+    #[tokio::test]
+    async fn redirects_without_slash() {
+        match resp("/page1").await.unwrap() {
+            MyResponse::Redirect(loc) => assert_eq!(loc, "/page1/"),
+            _ => panic!("expected redirect"),
+        }
+    }
+
+    #[tokio::test]
+    async fn compiles_css() {
+        match resp("/default.css").await.unwrap() {
+            MyResponse::Css(c) => assert!(c.contains("color")),
+            _ => panic!("expected css"),
+        }
+    }
+
+    #[tokio::test]
+    async fn missing_is_not_found() {
+        assert!(matches!(resp("/nope/").await, Err(MyError::NotFound)));
+    }
 }

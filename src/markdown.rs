@@ -7,6 +7,7 @@ use tracing::debug;
 
 use crate::cache::Cacheable;
 
+#[derive(Debug)]
 pub enum MarkdownError {
     InvalidHeader,
 }
@@ -81,4 +82,31 @@ fn split(data: &str) -> Option<(&str, &str)> {
     let data = data.trim_start().strip_prefix("---\n")?;
     let i = data.find("\n---\n")?;
     Some((&data[..i], &data[i + 5..]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn coerces_non_string_frontmatter() {
+        let doc = "---\ntitle = \"T\"\ndraft = true\nn = 42\n---\nbody text";
+        let page = markdown(doc).unwrap();
+        assert_eq!(page.fields().get("title").map(String::as_str), Some("T"));
+        assert_eq!(page.fields().get("draft").map(String::as_str), Some("true"));
+        assert_eq!(page.fields().get("n").map(String::as_str), Some("42"));
+        assert!(page.fields()["contents"].contains("body text"));
+    }
+
+    #[test]
+    fn body_only_has_no_header_fields() {
+        let page = markdown("just text").unwrap();
+        assert!(page.fields()["contents"].contains("just text"));
+        assert!(page.fields().get("title").is_none());
+    }
+
+    #[test]
+    fn broken_header_errors() {
+        assert!(markdown("---\ntitle = \"x\n---\nbody").is_err());
+    }
 }

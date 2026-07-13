@@ -5,7 +5,7 @@ use axum::{
     body::Body,
     debug_handler,
     extract::State,
-    http::{Method, Request, StatusCode},
+    http::{header, Method, Request, StatusCode},
     response::{IntoResponse, Response},
     Router,
 };
@@ -14,6 +14,7 @@ use clap::Parser;
 use tower::ServiceExt;
 use tower_http::services::ServeFile;
 use tracing::info;
+use twox_hash::XxHash3_128;
 
 use crate::web::{App, MyRequest};
 
@@ -79,10 +80,16 @@ async fn handler(State(app): State<Arc<App>>, req: Request<Body>) -> Response {
         return not_found();
     }
 
+    let if_none_match = req
+        .headers()
+        .get(header::IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
+
     match web::web(app, MyRequest::GET(uri_path)).await {
         Ok(r) => match r {
-            web::MyResponse::Html(x) => response_ok(x, "text/html"),
-            web::MyResponse::Css(x) => response_ok(x, "text/css"),
+            web::MyResponse::Html(x) => cached(x, "text/html", if_none_match.as_deref()),
+            web::MyResponse::Css(x) => cached(x, "text/css", if_none_match.as_deref()),
             web::MyResponse::File(f) => serve_file(&f, req).await,
             web::MyResponse::Redirect(url) => redirect(&url),
         },
@@ -95,10 +102,25 @@ async fn handler(State(app): State<Arc<App>>, req: Request<Body>) -> Response {
     }
 }
 
-fn response_ok(data: impl Into<Body>, mime: &str) -> Response {
+// Serve a generated body with an ETag; answer 304 when it is unchanged.
+fn cached(body: String, mime: &str, if_none_match: Option<&str>) -> Response {
+    let etag = format!("\"{:032x}\"", XxHash3_128::oneshot(body.as_bytes()));
+
+    if if_none_match == Some(etag.as_str()) {
+        return Response::builder()
+            .status(StatusCode::NOT_MODIFIED)
+            .header(header::ETAG, &etag)
+            .header(header::CACHE_CONTROL, "no-cache")
+            .body(Body::empty())
+            .unwrap()
+            .into_response();
+    }
+
     Response::builder()
-        .header("Content-Type", mime)
-        .body(data.into())
+        .header(header::CONTENT_TYPE, mime)
+        .header(header::ETAG, &etag)
+        .header(header::CACHE_CONTROL, "no-cache")
+        .body(Body::from(body))
         .unwrap()
         .into_response()
 }

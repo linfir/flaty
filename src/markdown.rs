@@ -1,19 +1,46 @@
 use std::collections::HashMap;
 
+use anyhow::anyhow;
 use pulldown_cmark::{html, Parser};
 use toml::{Table, Value};
+
+use crate::cache::Cacheable;
 
 pub enum MarkdownError {
     InvalidHeader,
 }
 
-pub fn markdown(doc: &str) -> Result<HashMap<String, String>, MarkdownError> {
-    let (h, doc) = parse_header(doc)?;
-    let mut h = h;
+// A rendered page: frontmatter fields plus the "contents" HTML.
+#[derive(Clone, Default)]
+pub struct Page {
+    fields: HashMap<String, String>,
+}
+
+impl Page {
+    pub fn template(&self) -> &str {
+        self.fields
+            .get("template")
+            .map(String::as_str)
+            .unwrap_or("default")
+    }
+
+    pub fn fields(&self) -> &HashMap<String, String> {
+        &self.fields
+    }
+}
+
+impl Cacheable for Page {
+    fn compute(src: &str) -> anyhow::Result<Self> {
+        markdown(src).map_err(|_| anyhow!("invalid page header"))
+    }
+}
+
+fn markdown(doc: &str) -> Result<Page, MarkdownError> {
+    let (mut fields, doc) = parse_header(doc)?;
     let mut buf = String::new();
     html::push_html(&mut buf, Parser::new(doc));
-    h.insert("contents".into(), buf);
-    Ok(h)
+    fields.insert("contents".into(), buf);
+    Ok(Page { fields })
 }
 
 fn parse_header(src: &str) -> Result<(HashMap<String, String>, &str), MarkdownError> {

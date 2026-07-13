@@ -1,13 +1,13 @@
 use std::{collections::HashSet, sync::Arc};
 
-use camino::{Utf8Path, Utf8PathBuf};
+use camino::Utf8PathBuf;
 use serde::Deserialize;
 use tracing::{debug, error};
 
 use crate::{
-    cache::{Cache, Cacheable},
-    markdown::markdown,
-    sass::sass,
+    cache::{Cache, CacheMap, Cacheable},
+    markdown::Page,
+    sass::Stylesheet,
     url::UrlPath,
 };
 
@@ -15,13 +15,29 @@ use crate::{
 
 pub struct App {
     config: Cache<Arc<Config>>,
+    pages: CacheMap<Arc<Page>>,
+    templates: CacheMap<Arc<Template>>,
+    styles: CacheMap<Arc<Stylesheet>>,
 }
 
 impl App {
     pub fn new() -> Self {
         App {
             config: Cache::new("_config.toml"),
+            pages: CacheMap::default(),
+            templates: CacheMap::default(),
+            styles: CacheMap::default(),
         }
+    }
+}
+
+// A page-layout template, cached as raw Handlebars source.
+#[derive(Clone, Default)]
+struct Template(String);
+
+impl Cacheable for Template {
+    fn compute(src: &str) -> anyhow::Result<Self> {
+        Ok(Template(src.to_owned()))
     }
 }
 
@@ -81,16 +97,26 @@ pub async fn web(app: Arc<App>, req: MyRequest<'_>) -> MyResult {
     };
 
     if url.has_final_slash() {
-        let html = render_page(url).await?;
+        let html = render_page(&app, url).await?;
         return Ok(MyResponse::Html(html));
     }
 
     if let Some(name) = url.path().strip_prefix('/').filter(|p| !p.contains('/')) {
         if let Some(stem) = name.strip_suffix(".css") {
             if valid_asset_name(stem) {
-                let doc = slurp(&format!("_style/{stem}.scss")).await?;
-                let css = sass(doc).await?;
-                return Ok(MyResponse::Css(css));
+                let scss_path = format!("_style/{stem}.scss");
+                // Don't create cache entries for missing stylesheets.
+                if !tokio::fs::try_exists(&scss_path).await.unwrap_or(false) {
+                    return Err(MyError::NotFound);
+                }
+                let css = match app.styles.load(&scss_path).await {
+                    Ok(css) => css,
+                    Err((_, err)) => {
+                        error!("{:?}", err);
+                        return Err(MyError::InvalidScss);
+                    }
+                };
+                return Ok(MyResponse::Css(css.css().to_owned()));
             }
         }
     }
@@ -113,25 +139,36 @@ pub async fn web(app: Arc<App>, req: MyRequest<'_>) -> MyResult {
     Err(MyError::NotFound)
 }
 
-async fn slurp(path: impl AsRef<Utf8Path>) -> Result<String, MyError> {
-    let path = path.as_ref();
-    tokio::fs::read_to_string(path)
-        .await
-        .map_err(|_| MyError::CannotRead(path.to_owned()))
-}
+async fn render_page(app: &App, url: UrlPath<'_>) -> Result<String, MyError> {
+    let page_path = format!("{}page.md", url.relative_path());
+    // Don't create cache entries for missing pages.
+    if !tokio::fs::try_exists(&page_path).await.unwrap_or(false) {
+        return Err(MyError::NotFound);
+    }
+    let page = match app.pages.load(&page_path).await {
+        Ok(page) => page,
+        Err((_, err)) => {
+            error!("{:?}", err);
+            return Err(MyError::NotFound);
+        }
+    };
 
-async fn render_page(url: UrlPath<'_>) -> Result<String, MyError> {
-    let doc = slurp(&format!("{}page.md", url.relative_path())).await?;
-    let md = markdown(&doc).map_err(|_| MyError::NotFound)?;
-
-    let template = md.get("template").map(String::as_str).unwrap_or("default");
+    let template = page.template();
     if !valid_asset_name(template) {
         return Err(MyError::NotFound);
     }
-    let tpl = slurp(&format!("_style/{template}.html")).await?;
+    let tpl_path = format!("_style/{template}.html");
+    let tpl = match app.templates.load(&tpl_path).await {
+        Ok(tpl) => tpl,
+        Err((_, err)) => {
+            error!("{:?}", err);
+            return Err(MyError::CannotRead(tpl_path.into()));
+        }
+    };
+
     let hbs = handlebars::Handlebars::new();
     let html = hbs
-        .render_template(&tpl, &md)
+        .render_template(&tpl.0, page.fields())
         .map_err(|_| MyError::Internal("invalid template".into()))?;
 
     Ok(html)

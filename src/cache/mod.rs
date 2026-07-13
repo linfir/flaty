@@ -28,13 +28,12 @@ impl<T> Cache<T> {
 
     pub async fn load(&self) -> Result<T, (T, Error)>
     where
-        T: Cacheable + Clone,
+        T: Cacheable + Clone + Send + 'static,
     {
         self.cache.load(&self.path).await
     }
 }
 
-#[allow(unused)]
 pub struct CacheMap<T> {
     map: DashMap<PathBuf, CacheBase<T>>,
 }
@@ -53,10 +52,9 @@ impl<T> CacheMap<T> {
         Self::default()
     }
 
-    #[allow(unused)]
     pub async fn load(&self, path: impl AsRef<Path>) -> Result<T, (T, Error)>
     where
-        T: Cacheable + Clone + Default,
+        T: Cacheable + Clone + Default + Send + 'static,
     {
         let path = path.as_ref();
         self.map.entry(path.into()).or_default().load(path).await

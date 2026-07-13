@@ -25,7 +25,7 @@ struct Cached<T> {
 impl<T> CacheBase<T> {
     pub async fn load(&self, path: impl AsRef<Path>) -> Result<T, (T, Error)>
     where
-        T: Cacheable + Clone,
+        T: Cacheable + Clone + Send + 'static,
     {
         let path = path.as_ref();
         let (digest, value) = {
@@ -53,20 +53,28 @@ impl<T> CacheBase<T> {
             }
             Ok((digest, Some(contents))) => {
                 debug!("Reloading file `{}`", path.display());
-                match T::compute(&contents) {
-                    Ok(value) => {
-                        let value2 = value.clone();
+                // Offload compute (may be CPU-heavy, e.g. scss) off the runtime.
+                match tokio::task::spawn_blocking(move || T::compute(&contents)).await {
+                    Ok(Ok(new_value)) => {
+                        let value2 = new_value.clone();
                         let mut lock = self.mutex.lock();
                         lock.last_check = Some(Instant::now());
                         lock.digest = Some(digest);
-                        lock.value = value;
+                        lock.value = new_value;
                         Ok(value2)
                     }
-                    Err(err) => {
+                    Ok(Err(err)) => {
                         let mut lock = self.mutex.lock();
                         lock.last_check = Some(Instant::now());
                         lock.digest = Some(digest);
                         let err = err.context(format!("cannot process `{}`", path.display()));
+                        Err((value, err))
+                    }
+                    Err(join_err) => {
+                        let mut lock = self.mutex.lock();
+                        lock.last_check = Some(Instant::now());
+                        let err = Error::from(join_err)
+                            .context(format!("compute panicked for `{}`", path.display()));
                         Err((value, err))
                     }
                 }

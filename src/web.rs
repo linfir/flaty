@@ -1,6 +1,6 @@
 use std::{collections::HashSet, sync::Arc};
 
-use camino::Utf8PathBuf;
+use camino::{Utf8Path, Utf8PathBuf};
 use serde::Deserialize;
 use tracing::{debug, error};
 
@@ -30,6 +30,10 @@ impl App {
             templates: CacheMap::default(),
             styles: CacheMap::default(),
         }
+    }
+
+    pub fn root(&self) -> &Utf8Path {
+        &self.root
     }
 }
 

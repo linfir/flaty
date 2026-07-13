@@ -78,7 +78,7 @@ async fn handler(State(app): State<Arc<App>>, req: Request<Body>) -> Response {
     let uri_path = req.uri().path();
 
     if method != Method::GET {
-        return not_found();
+        return error_page(&app, StatusCode::NOT_FOUND, "404.html", String::new()).await;
     }
 
     let if_none_match = req
@@ -87,21 +87,61 @@ async fn handler(State(app): State<Arc<App>>, req: Request<Body>) -> Response {
         .and_then(|v| v.to_str().ok())
         .map(str::to_owned);
 
-    match web::web(app, MyRequest::GET(uri_path)).await {
+    match web::web(app.clone(), MyRequest::GET(uri_path)).await {
         Ok(r) => match r {
             web::MyResponse::Html(x) => cached(x, "text/html", if_none_match.as_deref()),
             web::MyResponse::Css(x) => cached(x, "text/css", if_none_match.as_deref()),
             web::MyResponse::File(f) => serve_file(&f, req).await,
             web::MyResponse::Redirect(url) => redirect(&url),
         },
-        Err(e) => match e {
-            web::MyError::NotFound => not_found(),
-            web::MyError::InvalidPage => internal_error("Invalid page"),
-            web::MyError::InvalidScss => internal_error("Invalid SCSS"),
-            web::MyError::Internal(msg) => internal_error(msg),
-            web::MyError::CannotRead(f) => internal_error(format!("Cannot read file `{}`", f)),
-        },
+        Err(e) => {
+            use StatusCode as S;
+            match e {
+                web::MyError::NotFound => {
+                    error_page(&app, S::NOT_FOUND, "404.html", String::new()).await
+                }
+                web::MyError::InvalidPage => {
+                    error_page(
+                        &app,
+                        S::INTERNAL_SERVER_ERROR,
+                        "500.html",
+                        "Invalid page".into(),
+                    )
+                    .await
+                }
+                web::MyError::InvalidScss => {
+                    error_page(
+                        &app,
+                        S::INTERNAL_SERVER_ERROR,
+                        "500.html",
+                        "Invalid SCSS".into(),
+                    )
+                    .await
+                }
+                web::MyError::Internal(msg) => {
+                    error_page(&app, S::INTERNAL_SERVER_ERROR, "500.html", msg).await
+                }
+                web::MyError::CannotRead(f) => {
+                    let msg = format!("Cannot read file `{}`", f);
+                    error_page(&app, S::INTERNAL_SERVER_ERROR, "500.html", msg).await
+                }
+            }
+        }
     }
+}
+
+// Serve a custom error page from `_style/{file}` if present, else a plain body.
+async fn error_page(app: &App, status: StatusCode, file: &str, fallback: String) -> Response {
+    let path = app.root().join("_style").join(file);
+    if let Ok(html) = tokio::fs::read_to_string(&path).await {
+        return Response::builder()
+            .status(status)
+            .header(header::CONTENT_TYPE, "text/html")
+            .body(Body::from(html))
+            .unwrap()
+            .into_response();
+    }
+    (status, fallback).into_response()
 }
 
 // Serve a generated body with an ETag; answer 304 when it is unchanged.
@@ -127,10 +167,6 @@ fn cached(body: String, mime: &str, if_none_match: Option<&str>) -> Response {
         .into_response()
 }
 
-fn not_found() -> Response {
-    (StatusCode::NOT_FOUND, ()).into_response()
-}
-
 fn redirect(url: &str) -> Response {
     Response::builder()
         .status(StatusCode::MOVED_PERMANENTLY)
@@ -138,10 +174,6 @@ fn redirect(url: &str) -> Response {
         .body(Body::empty())
         .unwrap()
         .into_response()
-}
-
-fn internal_error(msg: impl Into<String>) -> Response {
-    (StatusCode::INTERNAL_SERVER_ERROR, msg.into()).into_response()
 }
 
 async fn serve_file(path: &Utf8Path, req: Request<Body>) -> Response {

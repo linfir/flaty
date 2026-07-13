@@ -136,7 +136,6 @@ pub async fn web(app: Arc<App>, req: MyRequest<'_>) -> MyResult {
         _ => (),
     }
 
-    // TODO: instead of checking existence, read, process and cache
     if tokio::fs::try_exists(app.root.join(format!("{}/page.md", url.relative_path())))
         .await
         .unwrap_or(false)

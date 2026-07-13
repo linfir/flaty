@@ -71,14 +71,3 @@ fn test_url_path() {
         "quz"
     );
 }
-
-// #[test]
-// fn test_to_components() {
-//     assert_eq!(to_components(""), None);
-//     assert_eq!(to_components("bla"), None);
-//     assert_eq!(to_components("/"), Some(vec![]));
-//     assert_eq!(to_components("/bla"), Some(vec!["bla"]));
-//     assert_eq!(to_components("/bla/"), Some(vec!["bla"]));
-//     assert_eq!(to_components("/bla/blo"), Some(vec!["bla", "blo"]));
-//     assert_eq!(to_components("/bla/blo/"), Some(vec!["bla", "blo"]));
-// }

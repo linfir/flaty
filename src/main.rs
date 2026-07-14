@@ -5,14 +5,14 @@ use axum::{
     body::Body,
     debug_handler,
     extract::State,
-    http::{header, Method, Request, StatusCode},
+    http::{header, HeaderValue, Method, Request, StatusCode},
     response::{IntoResponse, Response},
     Router,
 };
 use camino::{Utf8Path, Utf8PathBuf};
 use clap::Parser;
 use tower::ServiceExt;
-use tower_http::services::ServeFile;
+use tower_http::{services::ServeFile, set_header::SetResponseHeaderLayer};
 use tracing::info;
 use twox_hash::XxHash3_128;
 
@@ -61,7 +61,13 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("invalid or missing `_config.toml` (an empty file is fine)")?;
 
-    let app = Router::new().fallback(handler).with_state(app_state);
+    let app = Router::new()
+        .fallback(handler)
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::X_CONTENT_TYPE_OPTIONS,
+            HeaderValue::from_static("nosniff"),
+        ))
+        .with_state(app_state);
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     let local_addr = listener.local_addr()?;
@@ -104,8 +110,12 @@ async fn handler(State(app): State<Arc<App>>, req: Request<Body>) -> Response {
 
     match web::web(app.clone(), request).await {
         Ok(r) => match r {
-            web::MyResponse::Html(x) => cached(x, "text/html", if_none_match.as_deref()),
-            web::MyResponse::Css(x) => cached(x, "text/css", if_none_match.as_deref()),
+            web::MyResponse::Html(x) => {
+                cached(x, "text/html; charset=utf-8", if_none_match.as_deref())
+            }
+            web::MyResponse::Css(x) => {
+                cached(x, "text/css; charset=utf-8", if_none_match.as_deref())
+            }
             web::MyResponse::File(f) => serve_file(&f, req).await,
             web::MyResponse::Redirect(url) => redirect(&url),
         },
@@ -152,7 +162,7 @@ async fn error_page(app: &App, status: StatusCode, file: &str, fallback: String)
     if let Ok(html) = tokio::fs::read_to_string(&path).await {
         return Response::builder()
             .status(status)
-            .header(header::CONTENT_TYPE, "text/html")
+            .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
             .body(Body::from(html))
             .unwrap()
             .into_response();

@@ -254,13 +254,18 @@ fn parse_basic(header: &str) -> Option<(String, String)> {
 // Access is allowed unless the path is protected and the credentials name an
 // allowed user with the correct password.
 fn authorized(config: &Config, path: &str, authorization: Option<&str>) -> bool {
+    use subtle::ConstantTimeEq;
     let Some(allowed) = allowed_users(config, path) else {
         return true;
     };
     let Some((user, pass)) = authorization.and_then(parse_basic) else {
         return false;
     };
-    allowed.iter().any(|u| u == &user) && config.users.get(&user).is_some_and(|p| p == &pass)
+    allowed.iter().any(|u| u == &user)
+        && config
+            .users
+            .get(&user)
+            .is_some_and(|p| p.as_bytes().ct_eq(pass.as_bytes()).into())
 }
 
 #[cfg(test)]

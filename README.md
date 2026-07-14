@@ -151,6 +151,46 @@ The container runs as an unprivileged user and only reads `/data`, so
 `--read-only` and a `:ro` volume mount (as in the quick start) are
 recommended.
 
+## Multi-site
+
+One flaty instance can serve several websites. With `--multi`, the data
+directory contains one subdirectory per hostname, each a normal flaty site:
+
+```
+/data/
+  example.com/
+    _config.toml
+    _style/
+    page.md
+  blog.org/
+    _config.toml
+    _style/
+    page.md
+```
+
+The `Host` header of each request selects the site (lowercased, `:port` and
+trailing dot stripped). A request whose host matches no directory gets a plain
+404, and every site's `_config.toml` is validated at startup. Sites are
+discovered at startup, so restart the server after adding one.
+
+Run it by overriding the image command:
+
+```
+docker run --rm -it --name flaty --read-only -p 8080:8080 -v ./sites:/data:ro \
+  ghcr.io/linfir/flaty flaty --bind 0.0.0.0 --port 8080 --directory /data --multi
+```
+
+With nginx, every vhost proxies to the same upstream and must forward the
+original host:
+
+```nginx
+proxy_pass http://flaty;        # no URI part, as above
+proxy_set_header Host $host;    # required: nginx would otherwise send "flaty"
+```
+
+For host aliases (`www.example.com`), either redirect at the proxy or symlink
+one site directory to another.
+
 ## Custom error pages
 
 If present, `_style/404.html` and `_style/500.html` are served for the

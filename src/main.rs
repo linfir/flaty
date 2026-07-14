@@ -1,4 +1,4 @@
-use std::{net::ToSocketAddrs, sync::Arc};
+use std::{collections::HashMap, net::ToSocketAddrs, sync::Arc};
 
 use anyhow::{anyhow, Context};
 use axum::{
@@ -36,6 +36,38 @@ struct Args {
     /// Data directory
     #[arg(short, long, default_value_t = {".".into()})]
     directory: Utf8PathBuf,
+    /// Serve each subdirectory as a site selected by the Host header
+    #[arg(long)]
+    multi: bool,
+}
+
+enum Sites {
+    Single(Arc<App>),
+    Multi(HashMap<String, Arc<App>>),
+}
+
+impl Sites {
+    fn resolve(&self, host: Option<&str>) -> Option<Arc<App>> {
+        match self {
+            Sites::Single(app) => Some(app.clone()),
+            Sites::Multi(map) => map.get(&normalize_host(host?)?).cloned(),
+        }
+    }
+}
+
+// Lowercase, strip an optional `:port` and a trailing dot.
+// IPv6 literals pass through unchanged (they never match a site).
+fn normalize_host(host: &str) -> Option<String> {
+    let host = host.trim();
+    let host = match host.rsplit_once(':') {
+        Some((h, port)) if !h.contains(':') && port.bytes().all(|b| b.is_ascii_digit()) => h,
+        _ => host,
+    };
+    let host = host.strip_suffix('.').unwrap_or(host);
+    if host.is_empty() {
+        return None;
+    }
+    Some(host.to_ascii_lowercase())
 }
 
 #[tokio::main]
@@ -54,12 +86,39 @@ async fn main() -> anyhow::Result<()> {
         .next()
         .ok_or_else(|| anyhow!("cannot resolve server address"))?;
 
-    let app_state = Arc::new(App::new(args.directory));
-
-    app_state
-        .check_config()
-        .await
-        .context("invalid or missing `_config.toml` (an empty file is fine)")?;
+    let sites = if args.multi {
+        let mut map = HashMap::new();
+        for entry in args.directory.read_dir_utf8()? {
+            let entry = entry?;
+            let name = entry.file_name();
+            if name.starts_with('.') || name.starts_with('_') || !entry.path().is_dir() {
+                continue;
+            }
+            map.insert(
+                name.to_ascii_lowercase(),
+                Arc::new(App::new(entry.path().to_owned())),
+            );
+        }
+        if map.is_empty() {
+            return Err(anyhow!("no site directories in `{}`", args.directory));
+        }
+        for (name, app) in &map {
+            app.check_config().await.with_context(|| {
+                format!("site `{name}`: invalid or missing `_config.toml` (an empty file is fine)")
+            })?;
+        }
+        let mut names: Vec<_> = map.keys().cloned().collect();
+        names.sort();
+        info!("serving sites: {}", names.join(", "));
+        Sites::Multi(map)
+    } else {
+        let app = Arc::new(App::new(args.directory));
+        app.check_config()
+            .await
+            .context("invalid or missing `_config.toml` (an empty file is fine)")?;
+        Sites::Single(app)
+    };
+    let app_state = Arc::new(sites);
 
     let app = Router::new()
         .fallback(handler)
@@ -84,7 +143,15 @@ async fn main() -> anyhow::Result<()> {
 }
 
 #[debug_handler]
-async fn handler(State(app): State<Arc<App>>, req: Request<Body>) -> Response {
+async fn handler(State(sites): State<Arc<Sites>>, req: Request<Body>) -> Response {
+    let host = req
+        .headers()
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok());
+    let Some(app) = sites.resolve(host) else {
+        return (StatusCode::NOT_FOUND, "not found").into_response();
+    };
+
     let method = req.method();
     let uri_path = req.uri().path();
 
@@ -220,4 +287,27 @@ fn redirect(url: &str) -> Response {
 
 async fn serve_file(path: &Utf8Path, req: Request<Body>) -> Response {
     ServeFile::new(path).oneshot(req).await.into_response()
+}
+
+#[test]
+fn test_normalize_host() {
+    assert_eq!(
+        normalize_host("Example.COM").as_deref(),
+        Some("example.com")
+    );
+    assert_eq!(
+        normalize_host("example.com:8080").as_deref(),
+        Some("example.com")
+    );
+    assert_eq!(
+        normalize_host("example.com.").as_deref(),
+        Some("example.com")
+    );
+    assert_eq!(
+        normalize_host(" example.com ").as_deref(),
+        Some("example.com")
+    );
+    assert_eq!(normalize_host("[::1]:8080").as_deref(), Some("[::1]:8080"));
+    assert_eq!(normalize_host(""), None);
+    assert_eq!(normalize_host(":8080"), None);
 }

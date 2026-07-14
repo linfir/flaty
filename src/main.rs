@@ -1,4 +1,4 @@
-use std::{collections::HashMap, net::ToSocketAddrs, sync::Arc};
+use std::{net::ToSocketAddrs, sync::Arc};
 
 use anyhow::{anyhow, Context};
 use axum::{
@@ -11,6 +11,7 @@ use axum::{
 };
 use camino::{Utf8Path, Utf8PathBuf};
 use clap::Parser;
+use dashmap::DashMap;
 use tower::ServiceExt;
 use tower_http::{services::ServeFile, set_header::SetResponseHeaderLayer};
 use tracing::{info, warn};
@@ -43,16 +44,53 @@ struct Args {
 
 enum Sites {
     Single(Arc<App>),
-    Multi(HashMap<String, Arc<App>>),
+    // Each request's Host header selects a same-named subdirectory of `root`.
+    // Sites are discovered on demand and cached, so directories can be added
+    // or removed without a restart.
+    Multi {
+        root: Utf8PathBuf,
+        apps: DashMap<String, Arc<App>>,
+    },
 }
 
 impl Sites {
-    fn resolve(&self, host: Option<&str>) -> Option<Arc<App>> {
+    async fn resolve(&self, host: Option<&str>) -> Option<Arc<App>> {
         match self {
             Sites::Single(app) => Some(app.clone()),
-            Sites::Multi(map) => map.get(&normalize_host(host?)?).cloned(),
+            Sites::Multi { root, apps } => {
+                let name = normalize_host(host?)?;
+                if let Some(app) = apps.get(&name) {
+                    return Some(app.clone());
+                }
+                if !is_site_name(&name) {
+                    return None;
+                }
+                let dir = root.join(&name);
+                if !tokio::fs::metadata(&dir)
+                    .await
+                    .map(|m| m.is_dir())
+                    .unwrap_or(false)
+                {
+                    return None;
+                }
+                Some(
+                    apps.entry(name)
+                        .or_insert_with(|| Arc::new(App::new(dir)))
+                        .clone(),
+                )
+            }
         }
     }
+}
+
+// A host maps to a same-named subdirectory; reject anything that is not a
+// single safe path component (mirrors the startup filter, blocks traversal).
+fn is_site_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.starts_with('.')
+        && !name.starts_with('_')
+        && !name.contains('/')
+        && !name.contains('\\')
 }
 
 // Lowercase, strip an optional `:port` and a trailing dot.
@@ -87,30 +125,31 @@ async fn main() -> anyhow::Result<()> {
         .ok_or_else(|| anyhow!("cannot resolve server address"))?;
 
     let sites = if args.multi {
-        let mut map = HashMap::new();
+        // Warm the sites present at startup so their config is validated and
+        // logged now; new directories are still picked up on demand later.
+        let apps: DashMap<String, Arc<App>> = DashMap::new();
         for entry in args.directory.read_dir_utf8()? {
             let entry = entry?;
-            let name = entry.file_name();
-            if name.starts_with('.') || name.starts_with('_') || !entry.path().is_dir() {
+            let name = entry.file_name().to_ascii_lowercase();
+            if !is_site_name(&name) || !entry.path().is_dir() {
                 continue;
             }
-            map.insert(
-                name.to_ascii_lowercase(),
-                Arc::new(App::new(entry.path().to_owned())),
-            );
-        }
-        if map.is_empty() {
-            return Err(anyhow!("no site directories in `{}`", args.directory));
-        }
-        for (name, app) in &map {
+            let app = Arc::new(App::new(entry.path().to_owned()));
             if let Err(err) = app.check_config().await {
                 warn!("site `{name}`: {err:?} (serving 503 until `_config.toml` is valid)");
             }
+            apps.insert(name, app);
         }
-        let mut names: Vec<_> = map.keys().cloned().collect();
+        let mut names: Vec<_> = apps.iter().map(|e| e.key().clone()).collect();
         names.sort();
-        info!("serving sites: {}", names.join(", "));
-        Sites::Multi(map)
+        info!(
+            "serving sites (discovered on demand): [{}]",
+            names.join(", ")
+        );
+        Sites::Multi {
+            root: args.directory,
+            apps,
+        }
     } else {
         let app = Arc::new(App::new(args.directory));
         if let Err(err) = app.check_config().await {
@@ -148,7 +187,7 @@ async fn handler(State(sites): State<Arc<Sites>>, req: Request<Body>) -> Respons
         .headers()
         .get(header::HOST)
         .and_then(|v| v.to_str().ok());
-    let Some(app) = sites.resolve(host) else {
+    let Some(app) = sites.resolve(host).await else {
         return (StatusCode::NOT_FOUND, "not found").into_response();
     };
 

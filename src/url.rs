@@ -71,3 +71,22 @@ fn test_url_path() {
         "quz"
     );
 }
+
+#[test]
+fn underscore_blocks_whole_subtree() {
+    // A `_` (or `.`) prefix on any component blocks that component and every
+    // resource nested under it, at any depth.
+    for p in [
+        "/_style",
+        "/_style/",
+        "/_style/default.scss",
+        "/foo/_bar",
+        "/foo/_bar/baz.png",
+        "/a/b/_c/d/e.js",
+        "/foo/.git/config",
+    ] {
+        assert!(UrlPath::new(p).is_none(), "{p} should be blocked");
+    }
+    // Sibling paths without a `_`/`.` component stay reachable.
+    assert!(UrlPath::new("/foo/bar.css").is_some());
+}

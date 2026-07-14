@@ -157,7 +157,11 @@ pub async fn web(app: Arc<App>, req: MyRequest<'_>) -> MyResult {
 
     if let Some(name) = url.path().strip_prefix('/').filter(|p| !p.contains('/')) {
         if let Some(stem) = name.strip_suffix(".css") {
-            if valid_asset_name(stem) {
+            // Serve a real `.css` file as-is (falls through to raw file below);
+            // only compile `_style/{stem}.scss` when no such file exists.
+            let css_path = app.root.join(name);
+            let css_exists = tokio::fs::try_exists(&css_path).await.unwrap_or(false);
+            if !css_exists && valid_asset_name(stem) {
                 let scss_path = app.root.join(format!("_style/{stem}.scss"));
                 // Don't create cache entries for missing stylesheets.
                 if !tokio::fs::try_exists(&scss_path).await.unwrap_or(false) {
@@ -371,6 +375,29 @@ mod tests {
             MyResponse::Css(c) => assert!(c.contains("color")),
             _ => panic!("expected css"),
         }
+    }
+
+    #[tokio::test]
+    async fn real_css_wins_over_scss() {
+        // A `.css` file on disk is served as-is, without compiling SCSS.
+        let dir = Utf8PathBuf::from_path_buf(
+            std::env::temp_dir().join(format!("flaty-css-{}", std::process::id())),
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.join("_style")).unwrap();
+        std::fs::write(dir.join("theme.css"), "body{color:red}").unwrap();
+        std::fs::write(dir.join("_style/theme.scss"), "body{color:blue}").unwrap();
+        let app = Arc::new(App::new(dir.clone()));
+        let r = web(
+            app,
+            MyRequest::GET {
+                path: "/theme.css",
+                authorization: None,
+            },
+        )
+        .await;
+        assert!(matches!(r, Ok(MyResponse::File(_))));
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[tokio::test]

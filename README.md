@@ -11,7 +11,7 @@ is immediately reflected on the next reload.
 Serve a site directory with Docker:
 
 ```
-docker run --rm -it --name flaty -p 8080:80 -v ./your_site_root:/data:ro ghcr.io/linfir/flaty
+docker run --rm -it --name flaty --read-only -p 8080:8080 -v ./your_site_root:/data:ro ghcr.io/linfir/flaty
 ```
 
 Then open <http://localhost:8080/>.

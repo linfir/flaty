@@ -6,7 +6,7 @@ use std::{
 use base64::Engine as _;
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::Deserialize;
-use tracing::{debug, error};
+use tracing::debug;
 
 use crate::{
     cache::{Cache, CacheMap, Cacheable},
@@ -40,7 +40,9 @@ impl App {
         &self.root
     }
 
-    // Fail closed: the server must not start without a valid config.
+    // Load the config once at startup so problems show up in the log.
+    // Missing or invalid config is non-fatal: requests get 503 until it is
+    // valid (see `web`), and the server recovers once the file appears.
     pub async fn check_config(&self) -> anyhow::Result<()> {
         self.config.load().await.map_err(|(_, err)| err)?;
         Ok(())
@@ -66,9 +68,20 @@ struct Config {
     users: HashMap<String, String>,
 }
 
+// Raw file types served directly when `_config.toml` omits `extensions`.
+fn default_extensions() -> Vec<String> {
+    [
+        "png", "jpg", "jpeg", "gif", "svg", "webp", "avif", "ico", "pdf", "txt", "woff", "woff2",
+        "ttf", "otf",
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect()
+}
+
 #[derive(Deserialize, Default)]
 struct ConfigFile {
-    #[serde(default)]
+    #[serde(default = "default_extensions")]
     extensions: Vec<String>,
     #[serde(default)]
     protected: HashMap<String, Vec<String>>,
@@ -106,6 +119,7 @@ pub enum MyResponse {
 pub enum MyError {
     NotFound,
     Unauthorized,
+    Unavailable,
     InvalidPage,
     InvalidScss,
     CannotRead,
@@ -122,13 +136,11 @@ pub async fn web(app: Arc<App>, req: MyRequest<'_>) -> MyResult {
     debug!("GET {path}");
     let url = UrlPath::new(path).ok_or(MyError::NotFound)?;
 
-    // Reloads config
+    // A missing or invalid `_config.toml` -> 503, rather than serving a
+    // misconfigured site. The cache logs the underlying error.
     let config = match app.config.load().await {
         Ok(cfg) => cfg,
-        Err((cfg, err)) => {
-            error!("{:?}", err);
-            cfg
-        }
+        Err(_) => return Err(MyError::Unavailable),
     };
 
     if !authorized(&config, url.path(), authorization) {
@@ -150,10 +162,7 @@ pub async fn web(app: Arc<App>, req: MyRequest<'_>) -> MyResult {
                 }
                 let css = match app.styles.load(&scss_path).await {
                     Ok(css) => css,
-                    Err((_, err)) => {
-                        error!("{:?}", err);
-                        return Err(MyError::InvalidScss);
-                    }
+                    Err(_) => return Err(MyError::InvalidScss),
                 };
                 return Ok(MyResponse::Css(css.css().to_owned()));
             }
@@ -186,10 +195,7 @@ async fn render_page(app: &App, url: UrlPath<'_>) -> Result<String, MyError> {
     let page = match app.pages.load(&page_path).await {
         Ok(page) => page,
         // The file exists (checked above), so a load failure is a bad page.
-        Err((_, err)) => {
-            error!("{:?}", err);
-            return Err(MyError::InvalidPage);
-        }
+        Err(_) => return Err(MyError::InvalidPage),
     };
 
     let template = page.template();
@@ -199,10 +205,7 @@ async fn render_page(app: &App, url: UrlPath<'_>) -> Result<String, MyError> {
     let tpl_path = app.root.join(format!("_style/{template}.html"));
     let tpl = match app.templates.load(&tpl_path).await {
         Ok(tpl) => tpl,
-        Err((_, err)) => {
-            error!("{:?}", err);
-            return Err(MyError::CannotRead);
-        }
+        Err(_) => return Err(MyError::CannotRead),
     };
 
     let hbs = handlebars::Handlebars::new();

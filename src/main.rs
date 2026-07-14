@@ -13,7 +13,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 use clap::Parser;
 use tower::ServiceExt;
 use tower_http::{services::ServeFile, set_header::SetResponseHeaderLayer};
-use tracing::info;
+use tracing::{info, warn};
 use twox_hash::XxHash3_128;
 
 use crate::web::{App, MyRequest};
@@ -103,9 +103,9 @@ async fn main() -> anyhow::Result<()> {
             return Err(anyhow!("no site directories in `{}`", args.directory));
         }
         for (name, app) in &map {
-            app.check_config().await.with_context(|| {
-                format!("site `{name}`: invalid or missing `_config.toml` (an empty file is fine)")
-            })?;
+            if let Err(err) = app.check_config().await {
+                warn!("site `{name}`: {err:?} (serving 503 until `_config.toml` is valid)");
+            }
         }
         let mut names: Vec<_> = map.keys().cloned().collect();
         names.sort();
@@ -113,9 +113,9 @@ async fn main() -> anyhow::Result<()> {
         Sites::Multi(map)
     } else {
         let app = Arc::new(App::new(args.directory));
-        app.check_config()
-            .await
-            .context("invalid or missing `_config.toml` (an empty file is fine)")?;
+        if let Err(err) = app.check_config().await {
+            warn!("{err:?} (serving 503 until `_config.toml` is valid)");
+        }
         Sites::Single(app)
     };
     let app_state = Arc::new(sites);
@@ -194,6 +194,15 @@ async fn handler(State(sites): State<Arc<Sites>>, req: Request<Body>) -> Respons
                     error_page(&app, S::NOT_FOUND, "404.html", String::new()).await
                 }
                 web::MyError::Unauthorized => unauthorized(),
+                web::MyError::Unavailable => {
+                    error_page(
+                        &app,
+                        S::SERVICE_UNAVAILABLE,
+                        "503.html",
+                        "Service unavailable".into(),
+                    )
+                    .await
+                }
                 web::MyError::InvalidPage => {
                     error_page(
                         &app,

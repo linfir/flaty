@@ -148,9 +148,15 @@ async fn handler(State(app): State<Arc<App>>, req: Request<Body>) -> Response {
                 web::MyError::Internal(msg) => {
                     error_page(&app, S::INTERNAL_SERVER_ERROR, "500.html", msg).await
                 }
-                web::MyError::CannotRead(f) => {
-                    let msg = format!("Cannot read file `{}`", f);
-                    error_page(&app, S::INTERNAL_SERVER_ERROR, "500.html", msg).await
+                // Details are logged; do not echo file paths to clients.
+                web::MyError::CannotRead => {
+                    error_page(
+                        &app,
+                        S::INTERNAL_SERVER_ERROR,
+                        "500.html",
+                        "Internal error".into(),
+                    )
+                    .await
                 }
             }
         }

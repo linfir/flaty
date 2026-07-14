@@ -108,7 +108,7 @@ pub enum MyError {
     Unauthorized,
     InvalidPage,
     InvalidScss,
-    CannotRead(Utf8PathBuf),
+    CannotRead,
     Internal(String),
 }
 
@@ -201,7 +201,7 @@ async fn render_page(app: &App, url: UrlPath<'_>) -> Result<String, MyError> {
         Ok(tpl) => tpl,
         Err((_, err)) => {
             error!("{:?}", err);
-            return Err(MyError::CannotRead(tpl_path));
+            return Err(MyError::CannotRead);
         }
     };
 

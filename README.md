@@ -131,6 +131,26 @@ match applies. Passwords are stored in clear text, so this is meant for casual
 gating, not sensitive data; serve over HTTPS (for example behind a reverse
 proxy) so credentials are not sent in the clear.
 
+## Deployment
+
+flaty is meant to run behind a reverse proxy that terminates HTTPS. With
+nginx:
+
+- Proxy with `proxy_pass http://flaty;` (no URI part), so the raw request URI
+  is forwarded unchanged. flaty never percent-decodes paths and uses the same
+  string for access control and file lookup, which keeps encoded-path tricks
+  harmless; forwarding the raw URI preserves that property.
+- Expose the container port only to the proxy, not publicly.
+- flaty does not rate-limit authentication attempts; add a `limit_req` zone
+  on protected prefixes to slow down password brute force.
+- Add HTTPS-related headers (`Strict-Transport-Security`, a
+  `Content-Security-Policy`) at the proxy. flaty itself sends
+  `X-Content-Type-Options: nosniff`.
+
+The container runs as an unprivileged user and only reads `/data`, so
+`--read-only` and a `:ro` volume mount (as in the quick start) are
+recommended.
+
 ## Custom error pages
 
 If present, `_style/404.html` and `_style/500.html` are served for the

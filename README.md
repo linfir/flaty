@@ -96,15 +96,9 @@ A stylesheet `_style/<name>.scss` is compiled from SCSS and served at
 
 ## Static assets
 
-Only file extensions listed in `_config.toml` are served as static files. This
-is an allow-list, so nothing is exposed by accident:
-
-```toml
-extensions = ["svg", "png", "jpg", "pdf"]
-```
-
-With the above, `/heart.svg` is served from `heart.svg` on disk. A request for an
-extension that is not listed returns 404.
+Any request path with a file extension is served as a raw file from disk, so
+`/heart.svg` is served from `heart.svg`. Files under `_style/` and any path
+component starting with `.` or `_` remain unreachable.
 
 ## Access control
 

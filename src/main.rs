@@ -160,7 +160,7 @@ async fn main() -> anyhow::Result<()> {
             }
             let app = Arc::new(App::new(entry.path().to_owned()));
             if let Err(err) = app.check_config().await {
-                warn!("site `{name}`: {err:?} (serving 503 until `_config.toml` is valid)");
+                warn!("site `{name}`: {err:?} (serving 404 until `_config.toml` is valid)");
             }
             apps.insert(name, app);
         }
@@ -177,7 +177,7 @@ async fn main() -> anyhow::Result<()> {
     } else {
         let app = Arc::new(App::new(args.directory));
         if let Err(err) = app.check_config().await {
-            warn!("{err:?} (serving 503 until `_config.toml` is valid)");
+            warn!("{err:?} (serving 404 until `_config.toml` is valid)");
         }
         Sites::Single(app)
     };
@@ -269,15 +269,6 @@ async fn handler(State(sites): State<Arc<Sites>>, req: Request<Body>) -> Respons
                     error_page(&app, S::NOT_FOUND, "404.html", String::new()).await
                 }
                 web::MyError::Unauthorized => unauthorized(),
-                web::MyError::Unavailable => {
-                    error_page(
-                        &app,
-                        S::SERVICE_UNAVAILABLE,
-                        "503.html",
-                        "Service unavailable".into(),
-                    )
-                    .await
-                }
                 web::MyError::InvalidPage => {
                     error_page(
                         &app,

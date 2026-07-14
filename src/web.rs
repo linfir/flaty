@@ -1,8 +1,4 @@
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-    time::Duration,
-};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use base64::Engine as _;
 use camino::{Utf8Path, Utf8PathBuf};
@@ -62,7 +58,7 @@ impl App {
     }
 
     // Load the config once at startup so problems show up in the log.
-    // Missing or invalid config is non-fatal: requests get 503 until it is
+    // Missing or invalid config is non-fatal: requests get 404 until it is
     // valid (see `web`), and the server recovers once the file appears.
     pub async fn check_config(&self) -> anyhow::Result<()> {
         self.config.load().await.map_err(|(_, err)| err)?;
@@ -82,28 +78,14 @@ impl Cacheable for Template {
 
 #[derive(Debug, Default)]
 struct Config {
-    extensions: HashSet<String>,
     // Path prefix -> users allowed to access it (HTTP Basic auth).
     protected: HashMap<String, Vec<String>>,
     // Plain-text credentials (user -> password).
     users: HashMap<String, String>,
 }
 
-// Raw file types served directly when `_config.toml` omits `extensions`.
-fn default_extensions() -> Vec<String> {
-    [
-        "png", "jpg", "jpeg", "gif", "svg", "webp", "avif", "ico", "pdf", "txt", "woff", "woff2",
-        "ttf", "otf",
-    ]
-    .into_iter()
-    .map(String::from)
-    .collect()
-}
-
 #[derive(Deserialize, Default)]
 struct ConfigFile {
-    #[serde(default = "default_extensions")]
-    extensions: Vec<String>,
     #[serde(default)]
     protected: HashMap<String, Vec<String>>,
     #[serde(default)]
@@ -114,7 +96,6 @@ impl Cacheable for Config {
     fn compute(src: &str) -> anyhow::Result<Self> {
         let cf: ConfigFile = toml::from_str(src)?;
         Ok(Config {
-            extensions: cf.extensions.into_iter().collect(),
             protected: cf.protected,
             users: cf.users,
         })
@@ -140,7 +121,6 @@ pub enum MyResponse {
 pub enum MyError {
     NotFound,
     Unauthorized,
-    Unavailable,
     InvalidPage,
     InvalidScss,
     CannotRead,
@@ -157,11 +137,11 @@ pub async fn web(app: Arc<App>, req: MyRequest<'_>) -> MyResult {
     debug!("GET {path}");
     let url = UrlPath::new(path).ok_or(MyError::NotFound)?;
 
-    // A missing or invalid `_config.toml` -> 503, rather than serving a
+    // A missing or invalid `_config.toml` -> 404, rather than serving a
     // misconfigured site. The cache logs the underlying error.
     let config = match app.config.load().await {
         Ok(cfg) => cfg,
-        Err(_) => return Err(MyError::Unavailable),
+        Err(_) => return Err(MyError::NotFound),
     };
 
     if !authorized(&config, url.path(), authorization) {
@@ -190,11 +170,9 @@ pub async fn web(app: Arc<App>, req: MyRequest<'_>) -> MyResult {
         }
     }
 
-    match url.extension() {
-        Some(ext) if config.extensions.contains(ext) => {
-            return Ok(MyResponse::File(app.root.join(url.relative_path())));
-        }
-        _ => (),
+    // Any path with an extension is served as a raw file.
+    if url.extension().is_some() {
+        return Ok(MyResponse::File(app.root.join(url.relative_path())));
     }
 
     if tokio::fs::try_exists(app.root.join(format!("{}/page.md", url.relative_path())))
@@ -333,11 +311,7 @@ mod tests {
                 vec!["user1".to_string(), "user2".to_string()],
             ),
         ]);
-        let config = Config {
-            extensions: HashSet::new(),
-            protected,
-            users,
-        };
+        let config = Config { protected, users };
         // base64 of "user1:pw1" and "user2:pw2".
         let u1 = Some("Basic dXNlcjE6cHcx");
         let u2 = Some("Basic dXNlcjI6cHcy");
@@ -394,6 +368,14 @@ mod tests {
         match resp("/default.css").await.unwrap() {
             MyResponse::Css(c) => assert!(c.contains("color")),
             _ => panic!("expected css"),
+        }
+    }
+
+    #[tokio::test]
+    async fn serves_static_file() {
+        match resp("/heart.svg").await.unwrap() {
+            MyResponse::File(f) => assert!(f.ends_with("heart.svg")),
+            _ => panic!("expected file"),
         }
     }
 

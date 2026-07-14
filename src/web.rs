@@ -1,11 +1,14 @@
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
+    time::Duration,
 };
 
 use base64::Engine as _;
 use camino::{Utf8Path, Utf8PathBuf};
+use parking_lot::Mutex;
 use serde::Deserialize;
+use tokio::time::Instant;
 use tracing::debug;
 
 use crate::{
@@ -23,6 +26,7 @@ pub struct App {
     pages: CacheMap<Arc<Page>>,
     templates: CacheMap<Arc<Template>>,
     styles: CacheMap<Arc<Stylesheet>>,
+    last_access: Mutex<Instant>,
 }
 
 impl App {
@@ -33,11 +37,28 @@ impl App {
             pages: CacheMap::default(),
             templates: CacheMap::default(),
             styles: CacheMap::default(),
+            last_access: Mutex::new(Instant::now()),
         }
     }
 
     pub fn root(&self) -> &Utf8Path {
         &self.root
+    }
+
+    // Mark this site as just accessed (multi mode uses it to drop idle sites).
+    pub fn touch(&self) {
+        *self.last_access.lock() = Instant::now();
+    }
+
+    pub fn idle_for(&self, now: Instant) -> Duration {
+        now.saturating_duration_since(*self.last_access.lock())
+    }
+
+    // Drop cache entries idle beyond `ttl`, releasing their memory.
+    pub fn sweep(&self, ttl: Duration) {
+        self.pages.sweep(ttl);
+        self.templates.sweep(ttl);
+        self.styles.sweep(ttl);
     }
 
     // Load the config once at startup so problems show up in the log.

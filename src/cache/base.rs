@@ -27,6 +27,10 @@ struct Cached<T> {
 }
 
 impl<T> CacheBase<T> {
+    pub fn last_check(&self) -> Option<Instant> {
+        self.mutex.lock().last_check
+    }
+
     pub async fn load(&self, path: impl AsRef<Path>) -> Result<T, (T, Error)>
     where
         T: Cacheable + Clone + Send + 'static,

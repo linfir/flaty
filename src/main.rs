@@ -1,4 +1,4 @@
-use std::{net::ToSocketAddrs, sync::Arc};
+use std::{net::ToSocketAddrs, sync::Arc, time::Duration};
 
 use anyhow::{anyhow, Context};
 use axum::{
@@ -24,6 +24,11 @@ mod markdown;
 mod sass;
 mod url;
 mod web;
+
+// Cached pages/styles and idle multi-mode sites are released after this long
+// with no access; the next request recomputes/recreates them transparently.
+const CACHE_TTL: Duration = Duration::from_secs(5 * 60);
+const SWEEP_PERIOD: Duration = Duration::from_secs(60);
 
 #[derive(Parser)]
 #[clap(version, about, long_about=None)]
@@ -60,6 +65,7 @@ impl Sites {
             Sites::Multi { root, apps } => {
                 let name = normalize_host(host?)?;
                 if let Some(app) = apps.get(&name) {
+                    app.touch();
                     return Some(app.clone());
                 }
                 if !is_site_name(&name) {
@@ -78,6 +84,24 @@ impl Sites {
                         .or_insert_with(|| Arc::new(App::new(dir)))
                         .clone(),
                 )
+            }
+        }
+    }
+
+    // Drop cache entries idle beyond `ttl`, and in multi mode idle sites too.
+    fn sweep(&self, ttl: Duration) {
+        match self {
+            Sites::Single(app) => app.sweep(ttl),
+            Sites::Multi { apps, .. } => {
+                let now = tokio::time::Instant::now();
+                apps.retain(|_, app| {
+                    if app.idle_for(now) >= ttl {
+                        false
+                    } else {
+                        app.sweep(ttl);
+                        true
+                    }
+                });
             }
         }
     }
@@ -158,6 +182,18 @@ async fn main() -> anyhow::Result<()> {
         Sites::Single(app)
     };
     let app_state = Arc::new(sites);
+
+    tokio::spawn({
+        let sites = app_state.clone();
+        async move {
+            let mut ticker = tokio::time::interval(SWEEP_PERIOD);
+            ticker.tick().await; // skip the immediate first tick
+            loop {
+                ticker.tick().await;
+                sites.sweep(CACHE_TTL);
+            }
+        }
+    });
 
     let app = Router::new()
         .fallback(handler)

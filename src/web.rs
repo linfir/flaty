@@ -39,6 +39,12 @@ impl App {
     pub fn root(&self) -> &Utf8Path {
         &self.root
     }
+
+    // Fail closed: the server must not start without a valid config.
+    pub async fn check_config(&self) -> anyhow::Result<()> {
+        self.config.load().await.map_err(|(_, err)| err)?;
+        Ok(())
+    }
 }
 
 // A page-layout template, cached as raw Handlebars source.

@@ -56,6 +56,11 @@ async fn main() -> anyhow::Result<()> {
 
     let app_state = Arc::new(App::new(args.directory));
 
+    app_state
+        .check_config()
+        .await
+        .context("invalid or missing `_config.toml` (an empty file is fine)")?;
+
     let app = Router::new().fallback(handler).with_state(app_state);
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;

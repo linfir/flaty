@@ -38,6 +38,10 @@ your_site_root/
 Any file or directory whose name starts with `_` or `.` is never served, so
 `_style/` and `_config.toml` stay private.
 
+`_config.toml` must exist and parse (an empty file is fine): flaty refuses to
+start otherwise, so a broken or missing config cannot silently disable access
+control. While running, a broken edit keeps the last good config.
+
 ## Pages
 
 A page is a `page.md` file: an optional TOML front-matter block followed by

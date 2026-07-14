@@ -88,7 +88,8 @@ async fn handler(State(app): State<Arc<App>>, req: Request<Body>) -> Response {
     let method = req.method();
     let uri_path = req.uri().path();
 
-    if method != Method::GET {
+    // HEAD is handled as GET; hyper drops the response body.
+    if method != Method::GET && method != Method::HEAD {
         return error_page(&app, StatusCode::NOT_FOUND, "404.html", String::new()).await;
     }
 

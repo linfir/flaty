@@ -143,7 +143,7 @@ corresponding errors. Otherwise a minimal default response is returned.
 - `/<name>.css` compiles `_style/<name>.scss`.
 - A whitelisted static file is served at its path.
 - Names starting with `_` or `.` are rejected.
-- Only `GET` is handled.
+- Only `GET` and `HEAD` are handled.
 
 ## Caching
 

@@ -173,12 +173,16 @@ trailing dot stripped). A request whose host matches no directory gets a plain
 404, and every site's `_config.toml` is validated at startup. Sites are
 discovered at startup, so restart the server after adding one.
 
-Run it by overriding the image command:
+Run it with the image's multi-site switch:
 
 ```
 docker run --rm -it --name flaty --read-only -p 8080:8080 -v ./sites:/data:ro \
-  ghcr.io/linfir/flaty flaty --bind 0.0.0.0 --port 8080 --directory /data --multi
+  -e FLATY_MULTI=true ghcr.io/linfir/flaty
 ```
+
+The image defaults to `--bind 0.0.0.0 --port 8080 --directory /data`. These can
+be changed with `FLATY_BIND`, `FLATY_PORT` and `FLATY_DIRECTORY`, or by passing
+explicit flaty arguments after the image name.
 
 With nginx, every vhost proxies to the same upstream and must forward the
 original host:

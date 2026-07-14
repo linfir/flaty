@@ -38,9 +38,10 @@ your_site_root/
 Any file or directory whose name starts with `_` or `.` is never served, so
 `_style/` and `_config.toml` stay private.
 
-`_config.toml` must exist and parse (an empty file is fine): flaty refuses to
-start otherwise, so a broken or missing config cannot silently disable access
-control. While running, a broken edit keeps the last good config.
+`_config.toml` is optional: a missing config is treated as empty (no access
+control). A present config must parse -- while it is invalid the site serves
+404, so a broken edit cannot silently disable access control, and it recovers
+once the file is fixed.
 
 ## Pages
 

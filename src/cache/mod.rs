@@ -30,10 +30,15 @@ impl<T> Cache<T> {
         }
     }
 
-    pub async fn load(&self) -> Result<T, (T, Error)>
+    // Load the cached value; a missing file yields the default value instead
+    // of an error. Only a present-but-invalid file is an error.
+    pub async fn load_optional(&self) -> Result<T, (T, Error)>
     where
-        T: Cacheable + Clone + Send + 'static,
+        T: Cacheable + Clone + Default + Send + 'static,
     {
+        if !tokio::fs::try_exists(&self.path).await.unwrap_or(false) {
+            return Ok(T::default());
+        }
         self.cache.load(&self.path).await
     }
 }

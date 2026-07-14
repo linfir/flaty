@@ -58,10 +58,11 @@ impl App {
     }
 
     // Load the config once at startup so problems show up in the log.
-    // Missing or invalid config is non-fatal: requests get 404 until it is
-    // valid (see `web`), and the server recovers once the file appears.
+    // A missing `_config.toml` is fine (treated as empty). An invalid one is
+    // non-fatal: requests get 404 until it is valid (see `web`), and the
+    // server recovers once the file is fixed.
     pub async fn check_config(&self) -> anyhow::Result<()> {
-        self.config.load().await.map_err(|(_, err)| err)?;
+        self.config.load_optional().await.map_err(|(_, err)| err)?;
         Ok(())
     }
 }
@@ -137,9 +138,10 @@ pub async fn web(app: Arc<App>, req: MyRequest<'_>) -> MyResult {
     debug!("GET {path}");
     let url = UrlPath::new(path).ok_or(MyError::NotFound)?;
 
-    // A missing or invalid `_config.toml` -> 404, rather than serving a
-    // misconfigured site. The cache logs the underlying error.
-    let config = match app.config.load().await {
+    // A missing `_config.toml` is treated as empty (an unconfigured site).
+    // An invalid one -> 404, rather than serving a misconfigured site; the
+    // cache logs the underlying error.
+    let config = match app.config.load_optional().await {
         Ok(cfg) => cfg,
         Err(_) => return Err(MyError::NotFound),
     };
@@ -377,6 +379,28 @@ mod tests {
             MyResponse::File(f) => assert!(f.ends_with("heart.svg")),
             _ => panic!("expected file"),
         }
+    }
+
+    #[tokio::test]
+    async fn missing_config_treated_as_empty() {
+        // A directory without `_config.toml` still serves its files.
+        let dir = Utf8PathBuf::from_path_buf(
+            std::env::temp_dir().join(format!("flaty-noconfig-{}", std::process::id())),
+        )
+        .unwrap();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("x.svg"), "<svg/>").unwrap();
+        let app = Arc::new(App::new(dir.clone()));
+        let r = web(
+            app,
+            MyRequest::GET {
+                path: "/x.svg",
+                authorization: None,
+            },
+        )
+        .await;
+        assert!(matches!(r, Ok(MyResponse::File(_))));
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[tokio::test]

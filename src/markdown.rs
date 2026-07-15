@@ -1,5 +1,5 @@
 use anyhow::anyhow;
-use pulldown_cmark::{html, Parser};
+use pulldown_cmark::{html, Event, Parser, Tag, TagEnd};
 use serde_json::{Map, Value as Json};
 use toml::{Table, Value};
 
@@ -38,9 +38,33 @@ impl Cacheable for Page {
 fn markdown(doc: &str) -> Result<Page, MarkdownError> {
     let (mut fields, doc) = parse_header(doc)?;
     let mut buf = String::new();
-    html::push_html(&mut buf, Parser::new(doc));
+    html::push_html(&mut buf, strip_comments(Parser::new(doc)).into_iter());
     fields.insert("contents".into(), Json::String(buf));
     Ok(Page { fields })
+}
+
+// Drop `<!-- ... -->` comments so they never reach the output. A comment inside
+// a code span or block is plain text (not an Html event) and is kept.
+fn strip_comments<'a>(events: impl Iterator<Item = Event<'a>>) -> Vec<Event<'a>> {
+    let is_comment = |s: &str| s.trim_start().starts_with("<!--");
+    let mut out = Vec::new();
+    let mut iter = events.peekable();
+    while let Some(event) = iter.next() {
+        match &event {
+            Event::InlineHtml(s) if is_comment(s) => {}
+            // A block comment spans Start(HtmlBlock) .. End(HtmlBlock); skip it
+            // whole when its first line opens a comment.
+            Event::Start(Tag::HtmlBlock) if matches!(iter.peek(), Some(Event::Html(s)) if is_comment(s)) => {
+                for inner in iter.by_ref() {
+                    if matches!(inner, Event::End(TagEnd::HtmlBlock)) {
+                        break;
+                    }
+                }
+            }
+            _ => out.push(event),
+        }
+    }
+    out
 }
 
 fn parse_header(src: &str) -> Result<(Map<String, Json>, &str), MarkdownError> {
@@ -104,6 +128,20 @@ mod tests {
             .unwrap()
             .contains("just text"));
         assert!(page.fields().get("title").is_none());
+    }
+
+    #[test]
+    fn strips_html_comments() {
+        let doc = "text <!-- hideinline --> more\n\n<!-- a\nhideblock -->\n\n`<!-- keepspan -->`\n\n```\n<!-- keepfence -->\n```\n";
+        let html = markdown(doc).unwrap().fields()["contents"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(!html.contains("<!--"), "comment markers leaked: {html}");
+        assert!(!html.contains("hideinline"));
+        assert!(!html.contains("hideblock"));
+        assert!(html.contains("keepspan"));
+        assert!(html.contains("keepfence"));
     }
 
     #[test]

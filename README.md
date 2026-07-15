@@ -8,10 +8,11 @@ is immediately reflected on the next reload.
 
 ## Quick start
 
-Serve a site directory with Docker:
+Build the image from source, then serve a site directory with Docker:
 
 ```
-docker run --rm -it --name flaty --read-only -p 8080:8080 -v ./your_site_root:/data:ro ghcr.io/linfir/flaty
+docker build -t flaty https://github.com/linfir/flaty.git
+docker run --rm -it --name flaty --read-only -p 8080:8080 -v ./your_site_root:/data:ro flaty
 ```
 
 Then open <http://localhost:8080/>.
@@ -162,6 +163,24 @@ The container runs as an unprivileged user and only reads `/data`, so
 `--read-only` and a `:ro` volume mount (as in the quick start) are
 recommended.
 
+A `docker compose` setup that builds the image from source:
+
+```yaml
+services:
+  flaty:
+    build:
+      context: https://github.com/linfir/flaty.git
+    image: flaty
+    read_only: true
+    volumes:
+      - "./your_site_root:/data:ro"
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+```
+
+Deploy updates with `docker compose build && docker compose up -d`.
+
 ## Multi-site
 
 One flaty instance can serve several websites. With `--multi`, the data
@@ -188,7 +207,7 @@ Run it with the image's multi-site switch:
 
 ```
 docker run --rm -it --name flaty --read-only -p 8080:8080 -v ./sites:/data:ro \
-  -e FLATY_MULTI=true ghcr.io/linfir/flaty
+  -e FLATY_MULTI=true flaty
 ```
 
 The image defaults to `--bind 0.0.0.0 --port 8080 --directory /data`. These can

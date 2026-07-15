@@ -61,9 +61,12 @@ template = "default"
 This is a *very simple* page, with a [link](/about/).
 ```
 
-Every front-matter field becomes a template variable. Non-string scalar values
-(numbers, booleans, dates) are converted to strings; arrays and tables are
-ignored. The rendered Markdown body is available as the `contents` variable.
+Every front-matter field becomes a template variable, keeping its TOML type:
+strings, numbers, and booleans stay themselves, and arrays and tables are passed
+through too (datetimes become strings, since JSON has no datetime). So a boolean
+works with `{{#if draft}}` or `(eq author false)`, a number compares numerically
+with `(gt n 10)`, and a list drives `{{#each tags}}`. The rendered Markdown body
+is available as the `contents` variable.
 
 The `template` field selects the layout (see below); it defaults to `default`.
 

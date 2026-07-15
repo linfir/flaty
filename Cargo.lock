@@ -337,6 +337,7 @@ dependencies = [
  "pulldown-cmark",
  "rsass",
  "serde",
+ "serde_json",
  "subtle",
  "tokio",
  "toml",

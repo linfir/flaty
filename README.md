@@ -70,9 +70,11 @@ The `template` field selects the layout (see below); it defaults to `default`.
 ## Templates
 
 Templates live in `_style/<name>.html` and are rendered with
-[Handlebars](https://handlebarsjs.com/). A page selects one with the `template`
-front-matter field. The template receives all of the page's front-matter fields
-plus `contents`. Use triple braces to emit raw HTML (double braces HTML-escape):
+[handlebars-rust](https://github.com/sunng87/handlebars-rust), the Rust
+implementation of [Handlebars](https://handlebarsjs.com/). A page selects one
+with the `template` front-matter field. The template receives all of the page's
+front-matter fields plus `contents`. Use triple braces to emit raw HTML (double
+braces HTML-escape):
 
 ```html
 <!doctype html>
@@ -88,6 +90,14 @@ plus `contents`. Use triple braces to emit raw HTML (double braces HTML-escape):
 ```
 
 Template names must be bare identifiers (letters, digits, `-`, `_`).
+
+In addition to the built-in Handlebars helpers, flaty registers an `is_empty`
+helper. It is true for a missing field, an empty string, an empty array, or an
+empty table, and is meant for subexpressions:
+
+```html
+<title>{{#if (is_empty title)}}Untitled{{else}}{{title}}{{/if}}</title>
+```
 
 ## Styles
 

@@ -213,13 +213,26 @@ async fn render_page(app: &App, url: UrlPath<'_>) -> Result<String, MyError> {
         Err(_) => return Err(MyError::CannotRead),
     };
 
-    let hbs = handlebars::Handlebars::new();
+    let mut hbs = handlebars::Handlebars::new();
+    hbs.register_helper("is_empty", Box::new(is_empty));
     let html = hbs
         .render_template(&tpl.0, page.fields())
         .map_err(|_| MyError::Internal("invalid template".into()))?;
 
     Ok(html)
 }
+
+// True for null, empty string, empty array, or empty object.
+handlebars::handlebars_helper!(is_empty: |v: Json| {
+    use handlebars::JsonValue;
+    match v {
+        JsonValue::Null => true,
+        JsonValue::String(s) => s.is_empty(),
+        JsonValue::Array(a) => a.is_empty(),
+        JsonValue::Object(o) => o.is_empty(),
+        _ => false,
+    }
+});
 
 // Frontmatter/URL supplied names must be bare identifiers, no path traversal.
 fn valid_asset_name(name: &str) -> bool {

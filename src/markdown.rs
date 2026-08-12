@@ -90,6 +90,21 @@ pub fn render_markdown(src: &str) -> String {
     buf
 }
 
+pub fn strip_html_comments(src: &str) -> String {
+    let mut output = String::with_capacity(src.len());
+    let mut remaining = src;
+    while let Some(start) = remaining.find("<!--") {
+        output.push_str(&remaining[..start]);
+        let comment = &remaining[start + "<!--".len()..];
+        let Some(end) = comment.find("-->") else {
+            return output;
+        };
+        remaining = &comment[end + "-->".len()..];
+    }
+    output.push_str(remaining);
+    output
+}
+
 // Drop `<!-- ... -->` comments so they never reach the output. A comment inside
 // a code span or block is plain text (not an Html event) and is kept.
 fn strip_comments<'a>(events: impl Iterator<Item = Event<'a>>) -> Vec<Event<'a>> {
@@ -425,6 +440,15 @@ mod tests {
         assert!(!html.contains("hideblock"));
         assert!(html.contains("keepspan"));
         assert!(html.contains("keepfence"));
+    }
+
+    #[test]
+    fn strips_comments_from_html() {
+        assert_eq!(
+            strip_html_comments("before<!-- hidden -->after<!-- also hidden -->"),
+            "beforeafter"
+        );
+        assert_eq!(strip_html_comments("before<!-- hidden"), "before");
     }
 
     #[test]

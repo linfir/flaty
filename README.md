@@ -48,9 +48,10 @@ once the file is fixed.
 
 A page is a `page.md` file: an optional TOML front-matter block followed by
 Markdown (CommonMark; inline HTML is passed through). HTML comments
-(`<!-- ... -->`, inline or spanning several lines) are stripped and never appear
-in the output, so they work as editor-only notes; to show a literal comment, put
-it inside a code span or fenced code block.
+(`<!-- ... -->`, inline or spanning several lines) are stripped from generated
+pages, including comments in snippet and layout templates. They work as
+editor-only notes; to show a literal comment, put it inside a code span or fenced
+code block.
 
 ```markdown
 ---

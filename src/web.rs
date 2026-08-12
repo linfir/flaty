@@ -11,7 +11,7 @@ use tracing::{debug, error};
 
 use crate::{
     cache::{Cache, CacheMap, Cacheable},
-    markdown::{render_markdown, Block, Document, Page},
+    markdown::{render_markdown, strip_html_comments, Block, Document, Page},
     sass::Stylesheet,
     url::UrlPath,
 };
@@ -369,7 +369,7 @@ async fn render_page(app: &App, url: UrlPath<'_>) -> Result<String, MyError> {
         .render_template(&tpl.0, &fields)
         .map_err(|_| MyError::Internal("invalid template".into()))?;
 
-    Ok(html)
+    Ok(strip_html_comments(&html))
 }
 
 fn load_snippet_templates<'a>(
@@ -673,6 +673,38 @@ mod tests {
         assert!(html.contains("&lt;Label&gt; &lt;Page&gt;"));
         assert!(html.contains("<strong>Body</strong>"));
         assert!(html.contains("<a href=\"/ok\">Link</a>"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn strips_comments_from_layouts() {
+        let dir = Utf8PathBuf::from_path_buf(
+            std::env::temp_dir().join(format!("flaty-comments-{}", std::process::id())),
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.join("_style")).unwrap();
+        std::fs::write(
+            dir.join("_style/default.html"),
+            "<!-- layout note --><main>{{{contents}}}</main>",
+        )
+        .unwrap();
+        std::fs::write(dir.join("page.md"), "Visible").unwrap();
+
+        let app = Arc::new(App::new(dir.clone()));
+        let MyResponse::Html(html) = web(
+            app,
+            MyRequest::GET {
+                path: "/",
+                authorization: None,
+            },
+        )
+        .await
+        .unwrap() else {
+            panic!("expected html");
+        };
+        assert!(!html.contains("<!--"));
+        assert!(!html.contains("layout note"));
+        assert!(html.contains("<p>Visible</p>"));
         std::fs::remove_dir_all(&dir).ok();
     }
 

@@ -74,6 +74,41 @@ is available as the `contents` variable.
 
 The `template` field selects the layout (see below); it defaults to `default`.
 
+## Snippets
+
+Reusable block snippets live in `_style/snippets/<name>.html`. Invoke one from a
+page with a three-colon fence, followed by an optional TOML parameter block and
+an optional Markdown body:
+
+```markdown
+:::notice
+title = "A reusable block"
+important = true
+
+The body supports **Markdown**.
+:::
+```
+
+A blank line separates parameters from the body. A body-only snippet therefore
+starts with a blank line after its opening fence. Parameter values keep their
+TOML types, just like front matter. The names `contents` and `page` are reserved.
+
+The snippet template receives explicit parameters at the top level, the rendered
+body as `contents`, and page front matter under `page`:
+
+```handlebars
+<aside>
+  <strong>{{title}}</strong>
+  <div>{{{contents}}}</div>
+  <small>From {{page.author}}</small>
+</aside>
+```
+
+Use triple braces for `contents`, which is already HTML. Normal parameters and
+`page` fields should use double braces so they remain HTML-escaped. Snippets may
+be nested by using a longer fence for the outer snippet, such as `::::notice`
+with a matching `::::` closing line.
+
 ## Templates
 
 Templates live in `_style/<name>.html` and are rendered with

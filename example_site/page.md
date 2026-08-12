@@ -12,6 +12,12 @@ And a [link](/page1/). And an [about page](/about/) with a different layout.
 
 And an image: <img src="heart.svg" alt="heart" style="width: 2cm" />
 
+:::notice
+title = "A snippet"
+
+This reusable block contains **Markdown** and can read the page author.
+:::
+
 ## Lists
 
 1. First item

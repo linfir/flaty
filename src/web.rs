@@ -369,7 +369,7 @@ async fn render_page(app: &App, url: UrlPath<'_>) -> Result<String, MyError> {
         .render_template(&tpl.0, &fields)
         .map_err(|_| MyError::Internal("invalid template".into()))?;
 
-    Ok(strip_html_comments(&html))
+    Ok(html)
 }
 
 fn load_snippet_templates<'a>(
@@ -407,6 +407,18 @@ fn render_document<'a>(
     page: &serde_json::Map<String, Json>,
     templates: &mut impl Iterator<Item = &'a Arc<Template>>,
 ) -> Result<String, MyError> {
+    let mut hbs = handlebars::Handlebars::new();
+    hbs.register_helper("is_empty", Box::new(is_empty));
+    render_document_with(&hbs, root, document, page, templates)
+}
+
+fn render_document_with<'a>(
+    hbs: &handlebars::Handlebars<'_>,
+    root: &Utf8Path,
+    document: &Document,
+    page: &serde_json::Map<String, Json>,
+    templates: &mut impl Iterator<Item = &'a Arc<Template>>,
+) -> Result<String, MyError> {
     let mut expanded = String::new();
     for block in document.blocks() {
         match block {
@@ -420,25 +432,23 @@ fn render_document<'a>(
                 let template = templates.next().ok_or_else(|| {
                     MyError::Internal("missing snippet rendering dependency".into())
                 })?;
-                let body = render_document(root, body, page, templates)?;
+                let body = render_document_with(hbs, root, body, page, templates)?;
                 let mut context = params.clone();
                 context.insert("contents".into(), Json::String(body));
                 context.insert("page".into(), Json::Object(page.clone()));
 
                 let path = root.join(format!("_style/snippets/{name}.html"));
-                let mut hbs = handlebars::Handlebars::new();
-                hbs.register_helper("is_empty", Box::new(is_empty));
                 let html = hbs.render_template(&template.0, &context).map_err(|err| {
                     error!("invalid snippet `{path}` used at line {line}: {err}");
                     MyError::InvalidPage
                 })?;
                 expanded.push_str("\n\n");
-                expanded.push_str(&html);
+                expanded.push_str(&strip_html_comments(&html));
                 expanded.push_str("\n\n");
             }
         }
     }
-    Ok(render_markdown(&expanded))
+    Ok(strip_html_comments(&render_markdown(&expanded)))
 }
 
 // True for null, empty string, empty array, or empty object.
@@ -677,7 +687,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn strips_comments_from_layouts() {
+    async fn preserves_comments_from_layouts() {
         let dir = Utf8PathBuf::from_path_buf(
             std::env::temp_dir().join(format!("flaty-comments-{}", std::process::id())),
         )
@@ -702,9 +712,51 @@ mod tests {
         .unwrap() else {
             panic!("expected html");
         };
-        assert!(!html.contains("<!--"));
-        assert!(!html.contains("layout note"));
+        assert!(html.contains("<!-- layout note -->"));
         assert!(html.contains("<p>Visible</p>"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn unclosed_comments_stop_at_expansion_boundaries() {
+        let dir = Utf8PathBuf::from_path_buf(
+            std::env::temp_dir().join(format!("flaty-comment-boundaries-{}", std::process::id())),
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.join("_style/snippets")).unwrap();
+        std::fs::write(
+            dir.join("_style/default.html"),
+            "<main>{{{contents}}}</main><footer>layout after</footer>",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("_style/snippets/card.html"),
+            "<span>snippet before</span>{{{value}}}snippet after",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("page.md"),
+            ":::card\nvalue = \"<!-- unfinished\"\n:::\n\nPage after snippet\n\n<script><!--\ncontent after comment",
+        )
+        .unwrap();
+
+        let app = Arc::new(App::new(dir.clone()));
+        let MyResponse::Html(html) = web(
+            app,
+            MyRequest::GET {
+                path: "/",
+                authorization: None,
+            },
+        )
+        .await
+        .unwrap() else {
+            panic!("expected html");
+        };
+        assert!(html.contains("snippet before"));
+        assert!(!html.contains("snippet after"), "{html}");
+        assert!(html.contains("Page after snippet"));
+        assert!(!html.contains("content after comment"));
+        assert!(html.contains("layout after"));
         std::fs::remove_dir_all(&dir).ok();
     }
 

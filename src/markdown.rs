@@ -448,7 +448,7 @@ mod tests {
             strip_html_comments("before<!-- hidden -->after<!-- also hidden -->"),
             "beforeafter"
         );
-        assert_eq!(strip_html_comments("before<!-- hidden"), "before");
+        assert_eq!(strip_html_comments("before<!-- hidden\nafter"), "before");
     }
 
     #[test]
